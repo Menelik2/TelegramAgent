@@ -19,6 +19,13 @@ This app uses the official Telegram Bot API's Business connection updates (`busi
 4. `npm run dev` starts frontend and API in parallel.
 5. For webhook delivery, deploy the API to an HTTPS host and configure Telegram `setWebhook` with `business_connection` and `business_message` updates.
 
+## Human-like multilingual replies
+- The reply generator is tuned for natural, context-aware personal messaging rather than generic chatbot phrasing.
+- It can mirror English, Amharic (አማርኛ), and mixed-language messages; reply length and tone follow the owner’s saved preferences.
+- The generator uses recent stored messages and owner-entered memories when Supabase is configured. Memory is optional and can be disabled.
+- Emojis are used sparingly when appropriate. The agent must not invent the owner’s actions or feelings, and it answers honestly if asked whether it is an AI assistant.
+- Sensitive requests and high-stakes commitments are escalated for owner review rather than answered automatically.
+
 ## Safety defaults
 - Automation is OFF by default.
 - Only explicitly allowed contacts are eligible for automatic replies.

@@ -12,7 +12,8 @@
     "start": "node dist-server/index.js",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.server.json",
     "test": "vitest run",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "smoke": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",

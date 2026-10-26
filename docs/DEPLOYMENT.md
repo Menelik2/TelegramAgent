@@ -25,7 +25,7 @@ Telegram sends the secret in `X-Telegram-Bot-Api-Secret-Token`. The API verifies
 ## 3. Configure environment
 Copy `.env.example` to your local environment or configure secrets in your host's dashboard. Set `TELEGRAM_ALLOWED_USER_IDS` to a comma-separated allowlist of numeric Telegram sender IDs. Do not use display names or usernames as authorization identifiers.
 
-Set `OPENAI_API_KEY` and optionally `OPENAI_MODEL`. Never expose the key through a Vite `VITE_*` variable or browser bundle.
+Set `OPENAI_API_KEY` and optionally `OPENAI_MODEL`. Never expose the key through a Vite `VITE_*` variable or browser bundle. For persistent webhook idempotency and activity logs, apply `supabase/migrations/20261026000000_agent_persistence.sql` in the Supabase SQL Editor and set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on the API host only. Without these, the app uses a non-durable in-memory fallback.
 
 ## 4. Run locally
 ```bash
@@ -40,7 +40,7 @@ API health: `http://localhost:8787/api/health`
 ## 5. Deploy
 - Deploy the frontend to Vercel using `vercel.json`.
 - Deploy the API to a persistent Node.js host with the root directory set to the repository.
-- Configure `FRONTEND_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_ALLOWED_USER_IDS`, and `OPENAI_API_KEY` on the API host.
+- Configure `FRONTEND_URL`, `DASHBOARD_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_ALLOWED_USER_IDS`, and `OPENAI_API_KEY` on the API host. If using Supabase, also configure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
 - Set Telegram's webhook URL to the deployed API URL.
 - Run `npm run typecheck`, `npm test`, and `npm run build` before enabling live replies.
 

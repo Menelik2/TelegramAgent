@@ -184,5 +184,5 @@ export async function listConversationMessages(chatId: string): Promise<AgentMes
     direction: row.direction === "outgoing" ? "outgoing" : "incoming",
     text: String(row.message_text || ""),
     createdAt: String(row.created_at)
-  }));.reverse()
+  })).reverse();
 }

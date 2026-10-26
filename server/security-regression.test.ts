@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { decideReply, safeText } from "./policy.js";
+import { consumeRateLimit } from "./rate-limit.js";
 
 const decide = (text: string, overrides: Partial<Parameters<typeof decideReply>[0]> = {}) =>
   decideReply({ enabled: true, allowedContact: true, text, duplicate: false, ...overrides });
@@ -65,4 +66,27 @@ describe("AI agent security regression suite", () => {
       expect(safeText(null)).toBe("");
     });
   });
+  describe("rate limiting", () => {
+    it("allows requests up to the configured limit and rejects the next request", () => {
+      const key = "security-test-" + Math.random().toString(36).slice(2);
+      expect(consumeRateLimit(key, 2, 1000, 10000).allowed).toBe(true);
+      expect(consumeRateLimit(key, 2, 1000, 10001).allowed).toBe(true);
+      const blocked = consumeRateLimit(key, 2, 1000, 10002);
+      expect(blocked.allowed).toBe(false);
+      expect(blocked.retryAfterSeconds).toBeGreaterThan(0);
+    });
+
+    it("resets a bucket after its time window", () => {
+      const key = "security-reset-" + Math.random().toString(36).slice(2);
+      expect(consumeRateLimit(key, 1, 1000, 20000).allowed).toBe(true);
+      expect(consumeRateLimit(key, 1, 1000, 20001).allowed).toBe(false);
+      expect(consumeRateLimit(key, 1, 1000, 21000).allowed).toBe(true);
+    });
+
+    it("rejects invalid limiter configuration", () => {
+      expect(() => consumeRateLimit("bad-limit", 0, 1000, 1)).toThrow();
+      expect(() => consumeRateLimit("bad-window", 1, Number.NaN, 1)).toThrow();
+    });
+  });
+
 });

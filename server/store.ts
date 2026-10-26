@@ -101,3 +101,86 @@ export async function listEvents(limit = 50): Promise<AgentEvent[]> {
     createdAt: String(row.created_at)
   }));
 }
+
+
+export type AgentMessage = {
+  id?: number;
+  updateId?: string;
+  telegramMessageId?: number;
+  businessConnectionId: string;
+  chatId: string;
+  senderId?: string;
+  senderName: string;
+  username: string;
+  direction: "incoming" | "outgoing";
+  text: string;
+  createdAt?: string;
+};
+export type InboxConversation = {
+  chatId: string; senderId?: string; senderName: string; username: string;
+  businessConnectionId: string; lastMessage: string; lastMessageAt: string;
+  lastDirection: "incoming" | "outgoing"; messageCount: number;
+};
+export async function recordMessage(message: AgentMessage): Promise<void> {
+  if (!isPersistentStoreConfigured()) throw new Error("Configure Supabase to store the live inbox.");
+  const response = await supabaseRequest("agent_messages", {
+    method: "POST",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({
+      update_id: message.updateId || null,
+      telegram_message_id: message.telegramMessageId ?? null,
+      business_connection_id: message.businessConnectionId,
+      chat_id: message.chatId,
+      sender_id: message.senderId || null,
+      sender_name: message.senderName.slice(0, 160),
+      username: message.username.slice(0, 64),
+      direction: message.direction,
+      message_text: message.text.slice(0, 4096),
+      ...(message.createdAt ? { created_at: message.createdAt } : {})
+    })
+  });
+  if (!response.ok) throw new Error(`Supabase message write failed (${response.status}).`);
+}
+export async function listInbox(): Promise<InboxConversation[]> {
+  if (!isPersistentStoreConfigured()) throw new Error("Configure Supabase to load the live inbox.");
+  const response = await supabaseRequest("agent_messages?select=chat_id,sender_id,sender_name,username,business_connection_id,message_text,direction,created_at&order=created_at.desc&limit=1000");
+  if (!response.ok) throw new Error(`Supabase inbox read failed (${response.status}).`);
+  const rows = await response.json() as Array<Record<string, unknown>>;
+  const grouped = new Map<string, InboxConversation>();
+  for (const row of rows) {
+    const chatId = String(row.chat_id);
+    const existing = grouped.get(chatId);
+    if (existing) { existing.messageCount += 1; continue; }
+    grouped.set(chatId, {
+      chatId,
+      senderId: row.sender_id ? String(row.sender_id) : undefined,
+      senderName: String(row.sender_name || row.username || chatId),
+      username: String(row.username || ""),
+      businessConnectionId: String(row.business_connection_id),
+      lastMessage: String(row.message_text || ""),
+      lastMessageAt: String(row.created_at),
+      lastDirection: row.direction === "outgoing" ? "outgoing" : "incoming",
+      messageCount: 1
+    });
+  }
+  return [...grouped.values()];
+}
+export async function listConversationMessages(chatId: string): Promise<AgentMessage[]> {
+  if (!isPersistentStoreConfigured()) throw new Error("Configure Supabase to load conversation messages.");
+  const response = await supabaseRequest("agent_messages?select=id,update_id,telegram_message_id,business_connection_id,chat_id,sender_id,sender_name,username,direction,message_text,created_at&chat_id=eq." + encodeURIComponent(chatId) + "&order=created_at.asc&limit=300");
+  if (!response.ok) throw new Error(`Supabase conversation read failed (${response.status}).`);
+  const rows = await response.json() as Array<Record<string, unknown>>;
+  return rows.map(row => ({
+    id: Number(row.id),
+    updateId: row.update_id ? String(row.update_id) : undefined,
+    telegramMessageId: row.telegram_message_id == null ? undefined : Number(row.telegram_message_id),
+    businessConnectionId: String(row.business_connection_id),
+    chatId: String(row.chat_id),
+    senderId: row.sender_id ? String(row.sender_id) : undefined,
+    senderName: String(row.sender_name || ""),
+    username: String(row.username || ""),
+    direction: row.direction === "outgoing" ? "outgoing" : "incoming",
+    text: String(row.message_text || ""),
+    createdAt: String(row.created_at)
+  }));
+}

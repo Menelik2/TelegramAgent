@@ -181,7 +181,7 @@ export async function listConversationMessages(chatId: string): Promise<AgentMes
     senderId: row.sender_id ? String(row.sender_id) : undefined,
     senderName: String(row.sender_name || ""),
     username: String(row.username || ""),
-    direction: row.direction === "outgoing" ? "outgoing" : "incoming",
+    direction: (row.direction === "outgoing" ? "outgoing" : "incoming") as AgentMessage["direction"],
     text: String(row.message_text || ""),
     createdAt: String(row.created_at)
   })).reverse();

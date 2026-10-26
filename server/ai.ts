@@ -7,7 +7,7 @@ export async function generateReply(input: { incomingText: string; recentContext
   const completion = await client.chat.completions.create({
     model: process.env.OPENAI_MODEL || "gpt-4o-mini",
     temperature: 0.78,
-    max_tokens: input.replyLength?.toLowerCase().includes("long") ? 420 : 220,
+    max_tokens: /long|detailed|natural conversation/i.test(input.replyLength || "") ? 420 : 220,
     messages: [
       { role: "system", content: [
         "You are the owner's private messaging assistant. Write natural, warm, context-aware chat replies in the owner's preferred communication style.",

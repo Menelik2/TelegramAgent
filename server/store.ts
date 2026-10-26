@@ -169,7 +169,7 @@ export async function listInbox(): Promise<InboxConversation[]> {
 }
 export async function listConversationMessages(chatId: string): Promise<AgentMessage[]> {
   if (!isPersistentStoreConfigured()) throw new Error("Configure Supabase to load conversation messages.");
-  const response = await supabaseRequest("agent_messages?select=id,update_id,telegram_message_id,business_connection_id,chat_id,sender_id,sender_name,username,direction,message_text,created_at&chat_id=eq." + encodeURIComponent(chatId) + "&order=created_at.asc&limit=300");
+  const response = await supabaseRequest("agent_messages?select=id,update_id,telegram_message_id,business_connection_id,chat_id,sender_id,sender_name,username,direction,message_text,created_at&chat_id=eq." + encodeURIComponent(chatId) + "&order=created_at.desc&limit=300");
   if (!response.ok) throw new Error(`Supabase conversation read failed (${response.status}).`);
   const rows = await response.json() as Array<Record<string, unknown>>;
   return rows.map(row => ({
@@ -184,5 +184,5 @@ export async function listConversationMessages(chatId: string): Promise<AgentMes
     direction: row.direction === "outgoing" ? "outgoing" : "incoming",
     text: String(row.message_text || ""),
     createdAt: String(row.created_at)
-  }));
+  }));.reverse()
 }

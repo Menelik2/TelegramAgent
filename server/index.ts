@@ -4,7 +4,7 @@ import cors from "cors";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { decideReply, safeText } from "./policy.js";
 import { generateReply, isAiConfigured } from "./ai.js";
-import { claimUpdate, isPersistentStoreConfigured, listEvents, recordEvent } from "./store.js";
+import { claimUpdate, isPersistentStoreConfigured, listEvents, recordEvent, releaseUpdate } from "./store.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -108,7 +108,7 @@ app.post("/api/telegram/webhook", async (req, res) => {
     await logEvent("blocked", decision.reason, { updateId, senderId, chatId });
     return res.json({ ok: true, ignored: true, reason: decision.reason });
   }
-  if (!process.env.TELEGRAM_BOT_TOKEN) return res.status(503).json({ ok: false, error: "Telegram bot token is not configured." });
+  if (!process.env.TELEGRAM_BOT_TOKEN) { await releaseUpdate(updateId).catch(() => undefined); return res.status(503).json({ ok: false, error: "Telegram bot token is not configured." }); }
   try {
     const reply = await generateReply({ incomingText: text });
     const apiResponse = await fetch("https://api.telegram.org/bot" + process.env.TELEGRAM_BOT_TOKEN + "/sendMessage", {
@@ -119,12 +119,14 @@ app.post("/api/telegram/webhook", async (req, res) => {
     const body = await apiResponse.json() as { ok?: boolean; description?: string };
     if (!apiResponse.ok || !body.ok) {
       await logEvent("delivery_failed", body.description || "Telegram delivery failed.", { updateId, senderId, chatId });
+      await releaseUpdate(updateId).catch(() => undefined);
       return res.status(502).json({ ok: false, error: "Telegram delivery failed.", detail: body.description || "Unknown Telegram API error." });
     }
     await logEvent("reply_sent", "Automatic reply delivered.", { updateId, senderId, chatId });
     return res.json({ ok: true, sent: true });
   } catch (error) {
     await logEvent("reply_failed", error instanceof Error ? error.message : "Reply processing failed.", { updateId, senderId, chatId });
+    await releaseUpdate(updateId).catch(() => undefined);
     return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Reply processing failed." });
   }
 });

@@ -13,6 +13,15 @@ describe("agent store", () => {
     expect(await claimUpdate(id)).toBe(false);
   });
 
+  it("releases a failed update so a retry can claim it again", async () => {
+    if (isPersistentStoreConfigured()) return;
+    const id = "store-test-retry-update";
+    expect(await claimUpdate(id)).toBe(true);
+    const store = await import("./store.js");
+    await store.releaseUpdate(id);
+    expect(await claimUpdate(id)).toBe(true);
+  });
+
   it("records a minimal activity event without message content", async () => {
     if (isPersistentStoreConfigured()) return;
     await recordEvent({ kind: "test_event", updateId: "test-event-id", detail: "Unit test event" });

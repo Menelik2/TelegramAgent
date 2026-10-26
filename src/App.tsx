@@ -22,7 +22,7 @@ export default function App() {
   const [toast, setToast] = useState("");
   const selected = contacts.find(c => c.id === selectedId) ?? contacts[0];
   const filtered = useMemo(() => contacts.filter(c => (c.name + c.handle).toLowerCase().includes(query.toLowerCase())), [contacts, query]);
-  useEffect(() => { fetch("/api/status").then(r => r.json()).then((value: Status) => { setStatus(value); setAutomation(value.automationEnabled); }).catch(() => setStatus(null)); }, []);
+  useEffect(() => { fetch(`${apiBase}/api/status`).then(r => r.json()).then((value: Status) => { setStatus(value); setAutomation(value.automationEnabled); }).catch(() => setStatus(null)); }, [apiBase]);
   const flash = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2600); };
   const toggleContact = (id: string) => setContacts(prev => prev.map(c => c.id === id ? { ...c, allowed: !c.allowed } : c));
   const sendDemo = () => {

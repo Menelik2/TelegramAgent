@@ -2,6 +2,30 @@ import type { AgentPreferences, AgentContact, AgentMemory } from './profile-type
 const base = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
 function configured() { return Boolean(base && key); }
+let automationFallback = false;
+
+/** Persist automation state because Vercel functions may be cold-started or run concurrently. */
+export async function getAutomationEnabled(): Promise<boolean> {
+  if (!configured()) return automationFallback;
+  const r = await request('agent_preferences?select=automation_enabled&id=eq.1&limit=1');
+  if (!r.ok) throw new Error('Automation state could not be loaded. Apply the latest Supabase migrations.');
+  const rows = await r.json() as Array<{ automation_enabled?: boolean }>;
+  return rows[0]?.automation_enabled === true;
+}
+
+export async function setAutomationEnabled(enabled: boolean): Promise<void> {
+  if (!configured()) {
+    automationFallback = enabled;
+    return;
+  }
+  const r = await request('agent_preferences?on_conflict=id', {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify({ id: 1, automation_enabled: enabled, updated_at: new Date().toISOString() })
+  });
+  if (!r.ok) throw new Error('Automation state could not be saved. Apply the latest Supabase migrations.');
+  automationFallback = enabled;
+}
 async function request(path: string, init: RequestInit = {}) {
   if (!base || !key) throw new Error('Supabase persistence is not configured.');
   return fetch(`${base}/rest/v1/${path}`, { ...init, headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', ...(init.headers || {}) } });

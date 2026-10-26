@@ -38,9 +38,9 @@ Frontend: `http://localhost:5173`
 API health: `http://localhost:8787/api/health`
 
 ## 5. Deploy
-- Deploy the frontend to Vercel using `vercel.json`.
-- Deploy the API to a persistent Node.js host with the root directory set to the repository.
-- Configure `FRONTEND_URL`, `DASHBOARD_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_ALLOWED_USER_IDS`, and `OPENAI_API_KEY` on the API host. If using Supabase, also configure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
+- Deploy the API to a persistent Node.js host with the repository root as the app root.
+- Deploy the frontend to Vercel. Set the Vercel build environment variable `VITE_API_BASE_URL` to the API's public HTTPS origin (for example, `https://your-api.example.com`, with no trailing slash), then redeploy the frontend.
+- On the API host set `FRONTEND_URL` to the exact Vercel site origin, plus `DASHBOARD_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_ALLOWED_USER_IDS`, and `OPENAI_API_KEY`. If using Supabase, also configure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.
 - Set Telegram's webhook URL to the deployed API URL.
 - Run `npm run typecheck`, `npm test`, and `npm run build` before enabling live replies.
 

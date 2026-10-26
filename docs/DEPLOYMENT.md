@@ -25,7 +25,7 @@ In Vercel → Project → Settings → Environment Variables, add these for **Pr
 | `TELEGRAM_BOT_TOKEN` | Yes | Token from BotFather; server-side only |
 | `TELEGRAM_WEBHOOK_SECRET` | Yes | Random secret of 1–256 characters using Telegram's allowed characters: letters, numbers, underscore, hyphen |
 | `GEMINI_API_KEY` | Yes | Gemini API key; server-side only. Create one at https://aistudio.google.com/apikey |
-| `GEMINI_MODEL` | No | Defaults to `gemini-3.8-flash` |
+| `GEMINI_MODEL` | No | Defaults to `gemini-2.5-flash` |
 | `SUPABASE_URL` | Yes for live functionality | Supabase project URL, e.g. `https://YOUR_PROJECT.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes for live functionality | Supabase service-role key; never expose in a `VITE_*` variable |
 | `TELEGRAM_ALLOWED_USER_IDS` | Recommended | Comma-separated numeric Telegram sender IDs explicitly permitted for automatic replies |
@@ -43,6 +43,8 @@ In the Supabase SQL Editor, run each SQL migration in timestamp order:
 2. `supabase/migrations/20261027000000_agent_memory_contacts.sql`
 3. `supabase/migrations/20261028000000_live_inbox.sql`
 4. `supabase/migrations/20261029000000_serverless_runtime_state.sql`
+
+Do **not** run any older multi-user schema files. The files above are the only migrations required by the current single-owner implementation.
 
 The latest migration persists the automation ON/OFF state. Without it, the app intentionally refuses to enable automatic replies on Vercel. Keep the service-role key only in Vercel server-side environment variables.
 

@@ -21,7 +21,7 @@ Supabase Free currently includes a 500 MB database quota per project, plus separ
 TiDB Cloud may offer more free row-storage capacity, but it is MySQL-compatible rather than PostgreSQL-compatible. Moving to it would require replacing the Supabase REST data-access layer, rewriting migrations and adapting unique-conflict, transaction, and persistence behavior. Do not configure TiDB alongside the current Supabase implementation: it will not work as a drop-in replacement.
 
 If the database approaches its quota, first review stored message volume and retention, add pagination/retention where appropriate, and compare paid Supabase with a properly planned TiDB migration. Keep service-role/database credentials server-side only.
-- OpenAI-compatible AI provider
+- Google Gemini API for AI-generated replies
 - Telegram Bot API Business integration
 
 ## Quick start (local development)
@@ -67,10 +67,10 @@ In Vercel, open **Project → Settings → Environment Variables**. Add the foll
 | `DASHBOARD_API_TOKEN` | Yes | A long, random private token used to authorize dashboard API requests. Generate a unique value and keep it secret. |
 | `TELEGRAM_BOT_TOKEN` | Yes | The bot token from Telegram's official BotFather. |
 | `TELEGRAM_WEBHOOK_SECRET` | Yes | A random secret made only of letters, numbers, underscores, or hyphens; Telegram uses it to authenticate webhook requests. |
-| `OPENAI_API_KEY` | Yes | Your OpenAI API key. |
+| `GEMINI_API_KEY` | Yes | Gemini API key; server-side only. Create one at https://aistudio.google.com/apikey. |
 | `SUPABASE_URL` | Yes | The URL of your Supabase project. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | The Supabase service-role key from your project's API settings. **Server-side secret only—never add it to a `VITE_*` variable or frontend code.** |
-| `OPENAI_MODEL` | No | Optional model name; defaults to `gpt-4o-mini` when omitted. |
+| `GEMINI_MODEL` | No | Optional Gemini model name; defaults to `gemini-3.5-flash`. |
 | `TELEGRAM_ALLOWED_USER_IDS` | No | Optional comma-separated Telegram user IDs allowed to use owner-level features, if configured by the app. |
 | `FRONTEND_URL` | No | Optional public Vercel deployment URL if needed by your configuration. |
 | `VITE_API_BASE_URL` | No | Leave blank for this single-project deployment; the dashboard calls the same-origin `/api`. |
@@ -121,7 +121,7 @@ If deployment fails, open the Vercel deployment's **Build Logs** and **Functions
 - Verify inbound messages, saved inbox history, manual replies, and AI-generated reply previews before enabling automatic replies.
 - Keep automation off if the webhook, database, allowlist, or AI behavior is not verified.
 
-Vercel deployment does **not** automatically connect your Telegram account or create provider credentials. Those steps require your own Telegram, OpenAI, and Supabase accounts and secrets.
+Vercel deployment does **not** automatically connect your Telegram account or create provider credentials. Those steps require your own Telegram, Google AI Studio, and Supabase accounts and secrets.
 
 ## Human-like multilingual replies
 
@@ -142,7 +142,7 @@ Vercel deployment does **not** automatically connect your Telegram account or cr
 ## Persistence and dashboard authorization
 
 - Apply all migrations in `supabase/migrations/` in timestamp order before production use.
-- Configure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` only on the API host. The service-role key bypasses RLS and must never be exposed to the browser.
+- Configure `GEMINI_API_KEY`, `SUPABASE_URL`, and `SUPABASE_SERVICE_ROLE_KEY` only on the API host. The service-role key bypasses RLS and must never be exposed to the browser.
 - Set a long random `DASHBOARD_API_TOKEN` on the API host. The dashboard's Settings page accepts this token for the current browser session; protected `/api/agent/*` controls and `/api/activity` reject requests without it.
 - Without Supabase, development can use in-memory activity/deduplication, but saved memories, saved contact permissions, and the live inbox are unavailable. Do not use in-memory fallback for multi-instance production.
 

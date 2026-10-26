@@ -102,7 +102,6 @@ export async function listEvents(limit = 50): Promise<AgentEvent[]> {
   }));
 }
 
-
 export type AgentMessage = {
   id?: number;
   updateId?: string;
@@ -116,11 +115,19 @@ export type AgentMessage = {
   text: string;
   createdAt?: string;
 };
+
 export type InboxConversation = {
-  chatId: string; senderId?: string; senderName: string; username: string;
-  businessConnectionId: string; lastMessage: string; lastMessageAt: string;
-  lastDirection: "incoming" | "outgoing"; messageCount: number;
+  chatId: string;
+  senderId?: string;
+  senderName: string;
+  username: string;
+  businessConnectionId: string;
+  lastMessage: string;
+  lastMessageAt: string;
+  lastDirection: "incoming" | "outgoing";
+  messageCount: number;
 };
+
 export async function recordMessage(message: AgentMessage): Promise<void> {
   if (!isPersistentStoreConfigured()) throw new Error("Configure Supabase to store the live inbox.");
   const response = await supabaseRequest("agent_messages", {
@@ -143,33 +150,75 @@ export async function recordMessage(message: AgentMessage): Promise<void> {
   if (response.status === 409) return;
   if (!response.ok) throw new Error(`Supabase message write failed (${response.status}).`);
 }
+
 export async function listInbox(): Promise<InboxConversation[]> {
   if (!isPersistentStoreConfigured()) throw new Error("Configure Supabase to load the live inbox.");
-  const response = await supabaseRequest("agent_messages?select=chat_id,sender_id,sender_name,username,business_connection_id,message_text,direction,created_at&order=created_at.desc&limit=1000");
+  const response = await supabaseRequest(
+    "agent_messages?select=chat_id,sender_id,sender_name,username,business_connection_id,message_text,direction,created_at&order=created_at.desc&limit=2000"
+  );
   if (!response.ok) throw new Error(`Supabase inbox read failed (${response.status}).`);
   const rows = await response.json() as Array<Record<string, unknown>>;
-  const grouped = new Map<string, InboxConversation>();
+
+  type Acc = InboxConversation & { contactFromIncoming: boolean };
+  const grouped = new Map<string, Acc>();
+
   for (const row of rows) {
     const chatId = String(row.chat_id);
+    const direction: "incoming" | "outgoing" = row.direction === "outgoing" ? "outgoing" : "incoming";
+    const senderId = row.sender_id ? String(row.sender_id) : undefined;
+    const senderName = String(row.sender_name || row.username || chatId);
+    const username = String(row.username || "");
+    const businessConnectionId = String(row.business_connection_id || "direct");
+    const text = String(row.message_text || "");
+    const createdAt = String(row.created_at || new Date().toISOString());
+
     const existing = grouped.get(chatId);
-    if (existing) { existing.messageCount += 1; continue; }
-    grouped.set(chatId, {
-      chatId,
-      senderId: row.sender_id ? String(row.sender_id) : undefined,
-      senderName: String(row.sender_name || row.username || chatId),
-      username: String(row.username || ""),
-      businessConnectionId: String(row.business_connection_id),
-      lastMessage: String(row.message_text || ""),
-      lastMessageAt: String(row.created_at),
-      lastDirection: row.direction === "outgoing" ? "outgoing" : "incoming",
-      messageCount: 1
-    });
+    if (!existing) {
+      // First row is the newest message (query ordered desc).
+      grouped.set(chatId, {
+        chatId,
+        senderId,
+        senderName,
+        username,
+        businessConnectionId,
+        lastMessage: text,
+        lastMessageAt: createdAt,
+        lastDirection: direction,
+        messageCount: 1,
+        // Contact identity is reliable only on incoming messages.
+        contactFromIncoming: direction === "incoming"
+      });
+      continue;
+    }
+
+    existing.messageCount += 1;
+
+    // Prefer contact identity from an incoming message (not the owner/bot outbound row).
+    if (direction === "incoming" && !existing.contactFromIncoming) {
+      if (senderId) existing.senderId = senderId;
+      if (senderName) existing.senderName = senderName;
+      if (username) existing.username = username;
+      existing.contactFromIncoming = true;
+    }
+
+    // Keep a stable business connection id if we only had "direct" before.
+    if (existing.businessConnectionId === "direct" && businessConnectionId !== "direct") {
+      existing.businessConnectionId = businessConnectionId;
+    }
   }
-  return [...grouped.values()];
+
+  return [...grouped.values()]
+    .map(({ contactFromIncoming: _c, ...conversation }) => conversation)
+    .sort((a, b) => (a.lastMessageAt < b.lastMessageAt ? 1 : a.lastMessageAt > b.lastMessageAt ? -1 : 0));
 }
+
 export async function listConversationMessages(chatId: string): Promise<AgentMessage[]> {
   if (!isPersistentStoreConfigured()) throw new Error("Configure Supabase to load conversation messages.");
-  const response = await supabaseRequest("agent_messages?select=id,update_id,telegram_message_id,business_connection_id,chat_id,sender_id,sender_name,username,direction,message_text,created_at&chat_id=eq." + encodeURIComponent(chatId) + "&order=created_at.desc&limit=300");
+  const response = await supabaseRequest(
+    "agent_messages?select=id,update_id,telegram_message_id,business_connection_id,chat_id,sender_id,sender_name,username,direction,message_text,created_at&chat_id=eq." +
+      encodeURIComponent(chatId) +
+      "&order=created_at.asc&limit=400"
+  );
   if (!response.ok) throw new Error(`Supabase conversation read failed (${response.status}).`);
   const rows = await response.json() as Array<Record<string, unknown>>;
   return rows.map(row => ({
@@ -184,5 +233,5 @@ export async function listConversationMessages(chatId: string): Promise<AgentMes
     direction: (row.direction === "outgoing" ? "outgoing" : "incoming") as AgentMessage["direction"],
     text: String(row.message_text || ""),
     createdAt: String(row.created_at)
-  })).reverse();
+  }));
 }

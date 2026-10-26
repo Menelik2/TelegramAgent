@@ -8,7 +8,7 @@ This app uses the official Telegram Bot API's Business connection updates (`busi
 ## Stack
 - React + TypeScript + Vite + Tailwind CSS
 - Node.js + TypeScript + Express
-- Supabase Postgres/Auth (optional for persistent multi-user deployment)
+- Supabase Postgres (required for durable inbox, memory, contact permissions, and activity history)
 - OpenAI-compatible AI provider
 - Telegram Bot API Business integration
 
@@ -27,13 +27,13 @@ This app uses the official Telegram Bot API's Business connection updates (`busi
 - No Telegram login codes or user-account session scraping.
 
 ## Persistence and dashboard authorization
-- Apply `supabase/migrations/20261026000000_agent_persistence.sql` in the Supabase SQL Editor.
+- Apply all migrations in `supabase/migrations/` in timestamp order: webhook/activity persistence, saved contacts and memories, then live inbox history.
 - Configure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` only on the API host. The service-role key bypasses RLS and must never be exposed to the browser.
 - Set a long random `DASHBOARD_API_TOKEN` on the API host. The dashboard's Settings page accepts this token for the current browser session; protected `/api/agent/*` controls and `/api/activity` reject requests without it.
-- Without Supabase, development falls back to in-memory event/deduplication storage. That fallback is not durable and is not safe for multi-instance production.
+- Without Supabase, development can use in-memory activity/deduplication, but saved memories, saved contact permissions, and the live inbox are unavailable. Do not use in-memory fallback for multi-instance production.
 
 ## Deployment
 Deploy the frontend to Vercel and the API to a persistent Node.js host. Configure all secrets server-side. `TELEGRAM_WEBHOOK_SECRET` must match the secret token configured with Telegram's `setWebhook` call. See `.env.example` and `docs/DEPLOYMENT.md`.
 
-## Current implementation scope
-This repository provides the dashboard, API endpoints, webhook handling, policy checks, AI adapter, optional Supabase-backed webhook idempotency and activity logs, and an in-memory development fallback. The dashboard still contains sample inbox conversations; contact allowlist edits are not yet written to server configuration. Use a single-owner deployment only until proper user authentication, persistent contact/settings management, queueing, monitoring, retention controls, and end-to-end Telegram tests are implemented.
+## Live inbox and remaining limitations
+With the three Supabase migrations applied, the dashboard can load real Telegram Business conversations, display stored incoming/outgoing text, update explicit contact permissions, and send owner-authored manual replies through the connected business connection. Without a valid dashboard token, the inbox remains in clearly labeled preview mode. AI memory is owner-entered only; the app does not silently learn from private conversations. This is still a single-owner project using a shared dashboard token, not a multi-user product. Before broad production use, add formal user authentication, rate limiting, retention/deletion controls, operational monitoring, and a verified end-to-end Telegram test. Automatic replies remain off after backend restarts and must be explicitly re-enabled.

@@ -70,7 +70,7 @@ In Vercel, open **Project → Settings → Environment Variables**. Add the foll
 | `GEMINI_API_KEY` | Yes | Gemini API key; server-side only. Create one at https://aistudio.google.com/apikey. |
 | `SUPABASE_URL` | Yes | The URL of your Supabase project. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | The Supabase service-role key from your project's API settings. **Server-side secret only—never add it to a `VITE_*` variable or frontend code.** |
-| `GEMINI_MODEL` | No | Optional Gemini model name; defaults to `gemini-3.8-flash`. |
+| `GEMINI_MODEL` | No | Optional Gemini model name; defaults to `gemini-2.5-flash`. |
 | `TELEGRAM_ALLOWED_USER_IDS` | No | Optional comma-separated Telegram user IDs allowed to use owner-level features, if configured by the app. |
 | `FRONTEND_URL` | No | Optional public Vercel deployment URL if needed by your configuration. |
 | `VITE_API_BASE_URL` | No | Leave blank for this single-project deployment; the dashboard calls the same-origin `/api`. |
@@ -86,6 +86,8 @@ In Vercel, open **Project → Settings → Environment Variables**. Add the foll
    3. `supabase/migrations/20261028000000_live_inbox.sql`
    4. `supabase/migrations/20261029000000_serverless_runtime_state.sql`
 3. Confirm each script completes successfully before running the next one.
+
+Do **not** run any older multi-user schema files. The four files above are the only migrations required by the current single-owner implementation.
 
 The newest migration adds persistent automation settings. The backend intentionally fails safely when required production persistence is unavailable. Do not enable automation until all migrations have been applied successfully.
 
@@ -141,7 +143,7 @@ Vercel deployment does **not** automatically connect your Telegram account or cr
 
 ## Persistence and dashboard authorization
 
-- Apply all migrations in `supabase/migrations/` in timestamp order before production use.
+- Apply the four timestamped migrations in `supabase/migrations/` (starting `20261026…`) before production use.
 - Configure `GEMINI_API_KEY`, `SUPABASE_URL`, and `SUPABASE_SERVICE_ROLE_KEY` only on the API host. The service-role key bypasses RLS and must never be exposed to the browser.
 - Set a long random `DASHBOARD_API_TOKEN` on the API host. The dashboard's Settings page accepts this token for the current browser session; protected `/api/agent/*` controls and `/api/activity` reject requests without it.
 - Without Supabase, development can use in-memory activity/deduplication, but saved memories, saved contact permissions, and the live inbox are unavailable. Do not use in-memory fallback for multi-instance production.

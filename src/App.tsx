@@ -44,7 +44,7 @@ export default function App() {
       const colors = ["lilac", "blue", "mint", "peach"];
       const mapped: Contact[] = (inboxData.conversations || []).map((item: {chatId:string;senderId?:string;senderName:string;username:string;lastMessage:string;lastMessageAt:string;lastDirection:string}, i:number) => ({
         id: item.chatId, senderId: item.senderId, name: item.senderName || item.username || item.chatId,
-        handle: item.username ? "@" + item.username : item.chatId, initials: (item.senderName || item.username || item.chatId).split(/\\s+/).slice(0,2).map((s:string)=>s[0]).join("").toUpperCase(),
+        handle: item.username ? "@" + item.username : item.chatId, initials: (item.senderName || item.username || item.chatId).split(/\s+/).slice(0,2).map((s:string)=>s[0]).join("").toUpperCase(),
         color: colors[i % colors.length], last: item.lastMessage, time: new Date(item.lastMessageAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}),
         allowed: item.senderId ? permissions.get(item.senderId) === true : false, messages: []
       }));

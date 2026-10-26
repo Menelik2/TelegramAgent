@@ -4,13 +4,13 @@ import cors from "cors";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { decideReply, safeText } from "./policy.js";
 import { generateReply, isAiConfigured } from "./ai.js";
+import { claimUpdate, isPersistentStoreConfigured, listEvents, recordEvent } from "./store.js";
 
 const app = express();
 app.disable("x-powered-by");
 app.use(cors({ origin: (process.env.FRONTEND_URL || "http://localhost:5173").split(",").map(s => s.trim()), credentials: false }));
 app.use(express.json({ limit: "256kb" }));
 const port = Number(process.env.PORT || 8787);
-const seenUpdates = new Set<string>();
 const allowlist = new Set((process.env.TELEGRAM_ALLOWED_USER_IDS || "").split(",").map(s => s.trim()).filter(Boolean));
 let automationEnabled = false;
 let lastWebhookAt: string | null = null;
@@ -19,12 +19,28 @@ function constantTimeEqual(a: string, b: string): boolean {
   const aa = Buffer.from(a); const bb = Buffer.from(b);
   return aa.length === bb.length && timingSafeEqual(aa, bb);
 }
+async function logEvent(kind: string, detail: string, values: { updateId?: string; senderId?: string; chatId?: string } = {}) {
+  try { await recordEvent({ kind, detail, ...values }); }
+  catch (error) { console.error("activity_write_failed", error instanceof Error ? error.message : "unknown"); }
+}
+
 app.get("/api/health", (_req, res) => res.json({ ok: true, service: "telegram-agent-api", time: new Date().toISOString() }));
 app.get("/api/status", (_req, res) => res.json({
   ok: true, automationEnabled, telegramConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_WEBHOOK_SECRET),
-  aiConfigured: isAiConfigured(), mode: "explicit-allowlist", lastWebhookAt
+  aiConfigured: isAiConfigured(), storageConfigured: isPersistentStoreConfigured(), mode: "explicit-allowlist", lastWebhookAt
 }));
-app.get("/api/agent/settings", (_req, res) => res.json({ automationEnabled, mode: "explicit-allowlist", allowedContactCount: allowlist.size }));
+app.get("/api/agent/settings", (_req, res) => res.json({
+  automationEnabled, mode: "explicit-allowlist", allowedContactCount: allowlist.size,
+  persistentStorage: isPersistentStoreConfigured()
+}));
+app.get("/api/activity", async (req, res) => {
+  try {
+    const limit = Number(req.query.limit || 30);
+    return res.json({ ok: true, persistent: isPersistentStoreConfigured(), events: await listEvents(limit) });
+  } catch {
+    return res.status(503).json({ ok: false, error: "Activity storage is unavailable." });
+  }
+});
 app.post("/api/agent/pause", (_req, res) => { automationEnabled = false; res.json({ ok: true, automationEnabled }); });
 app.post("/api/agent/resume", (_req, res) => {
   if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_WEBHOOK_SECRET || !isAiConfigured()) {
@@ -46,6 +62,7 @@ app.post("/api/agent/simulate", async (req, res) => {
     return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "AI provider unavailable." });
   }
 });
+
 app.post("/api/telegram/webhook", async (req, res) => {
   const expected = process.env.TELEGRAM_WEBHOOK_SECRET || "";
   const provided = req.header("x-telegram-bot-api-secret-token") || "";
@@ -53,20 +70,36 @@ app.post("/api/telegram/webhook", async (req, res) => {
   const update = req.body as Record<string, any>;
   const updateId = String(update?.update_id ?? "");
   if (!updateId) return res.status(400).json({ ok: false, error: "Missing update_id." });
-  if (seenUpdates.has(updateId)) return res.json({ ok: true, duplicate: true });
-  seenUpdates.add(updateId);
-  if (seenUpdates.size > 5000) seenUpdates.clear();
+  try {
+    const claimed = await claimUpdate(updateId);
+    if (!claimed) return res.json({ ok: true, duplicate: true });
+  } catch (error) {
+    console.error("update_claim_failed", error instanceof Error ? error.message : "unknown");
+    return res.status(503).json({ ok: false, error: "Update storage is temporarily unavailable; Telegram may retry." });
+  }
   lastWebhookAt = new Date().toISOString();
   const connection = update.business_connection;
-  if (connection) return res.json({ ok: true, connectionReceived: true, enabled: Boolean(connection.is_enabled) });
+  if (connection) {
+    await logEvent("business_connection", connection.is_enabled ? "Business connection enabled." : "Business connection disabled.", { updateId });
+    return res.json({ ok: true, connectionReceived: true, enabled: Boolean(connection.is_enabled) });
+  }
   const message = update.business_message;
-  if (!message || message.from?.is_bot || !message.business_connection_id) return res.json({ ok: true, ignored: true });
+  if (!message || message.from?.is_bot || !message.business_connection_id) {
+    await logEvent("ignored", "Unsupported update or non-business message ignored.", { updateId });
+    return res.json({ ok: true, ignored: true });
+  }
   const senderId = String(message.from?.id ?? "");
   const chatId = String(message.chat?.id ?? "");
   const text = safeText(message.text ?? message.caption ?? "");
-  if (!text || !senderId || !chatId) return res.json({ ok: true, ignored: true, reason: "Unsupported message type." });
+  if (!text || !senderId || !chatId) {
+    await logEvent("ignored", "Empty or unsupported message ignored.", { updateId, senderId, chatId });
+    return res.json({ ok: true, ignored: true, reason: "Unsupported message type." });
+  }
   const decision = decideReply({ enabled: automationEnabled, allowedContact: allowlist.has(senderId), text, duplicate: false });
-  if (!decision.allowed) return res.json({ ok: true, ignored: true, reason: decision.reason });
+  if (!decision.allowed) {
+    await logEvent("blocked", decision.reason, { updateId, senderId, chatId });
+    return res.json({ ok: true, ignored: true, reason: decision.reason });
+  }
   if (!process.env.TELEGRAM_BOT_TOKEN) return res.status(503).json({ ok: false, error: "Telegram bot token is not configured." });
   try {
     const reply = await generateReply({ incomingText: text });
@@ -77,10 +110,13 @@ app.post("/api/telegram/webhook", async (req, res) => {
     });
     const body = await apiResponse.json() as { ok?: boolean; description?: string };
     if (!apiResponse.ok || !body.ok) {
+      await logEvent("delivery_failed", body.description || "Telegram delivery failed.", { updateId, senderId, chatId });
       return res.status(502).json({ ok: false, error: "Telegram delivery failed.", detail: body.description || "Unknown Telegram API error." });
     }
+    await logEvent("reply_sent", "Automatic reply delivered.", { updateId, senderId, chatId });
     return res.json({ ok: true, sent: true });
   } catch (error) {
+    await logEvent("reply_failed", error instanceof Error ? error.message : "Reply processing failed.", { updateId, senderId, chatId });
     return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Reply processing failed." });
   }
 });

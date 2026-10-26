@@ -40,7 +40,7 @@ This app uses the official Telegram Bot API's Business connection updates (`busi
 - Without Supabase, development can use in-memory activity/deduplication, but saved memories, saved contact permissions, and the live inbox are unavailable. Do not use in-memory fallback for multi-instance production.
 
 ## Deployment
-Deploy the frontend to Vercel and the API to a persistent Node.js host. Configure all secrets server-side. `TELEGRAM_WEBHOOK_SECRET` must match the secret token configured with Telegram's `setWebhook` call. See `.env.example` and `docs/DEPLOYMENT.md`.
+The project is configured for a **single Vercel deployment**: Vite serves the dashboard and `api/[...path].ts` routes `/api/*` to the Express backend. Configure `DASHBOARD_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `OPENAI_API_KEY`, `SUPABASE_URL`, and `SUPABASE_SERVICE_ROLE_KEY` in Vercel Project Settings. Apply all SQL migrations in `supabase/migrations/` in timestamp order before enabling automation. Leave `VITE_API_BASE_URL` blank so the dashboard calls the same-domain API. Follow [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) for the exact setup and Telegram webhook instructions.
 
 ## API abuse protection
 

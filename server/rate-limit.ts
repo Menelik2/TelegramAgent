@@ -20,6 +20,12 @@ export function consumeRateLimit(key: string, limit: number, windowMs: number, n
     for (const [entryKey, entry] of buckets) {
       if (entry.resetAt <= now) buckets.delete(entryKey);
     }
+    // Bound memory even during a burst of unique client identifiers.
+    while (buckets.size > 4000) {
+      const oldestKey = buckets.keys().next().value;
+      if (oldestKey === undefined) break;
+      buckets.delete(oldestKey);
+    }
   }
 
   if (bucket.count >= limit) {

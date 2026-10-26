@@ -51,7 +51,7 @@ app.post("/api/agent/telegram/configure-webhook", async (_req, res) => {
   const baseUrl = (process.env.APP_BASE_URL || (process.env.VERCEL_URL ? "https://" + process.env.VERCEL_URL : "")).replace(/\/$/, "");
   if (!token || !secret) return res.status(409).json({ ok: false, error: "Missing TELEGRAM_BOT_TOKEN or TELEGRAM_WEBHOOK_SECRET in Vercel Environment Variables. Add both to Production and redeploy." });
   if (!/^[A-Za-z0-9_-]{1,256}$/.test(secret)) return res.status(409).json({ ok: false, error: "TELEGRAM_WEBHOOK_SECRET must be 1–256 characters and contain only letters, numbers, underscores, or hyphens." });
-  if (!baseUrl || !baseUrl.startsWith("https://")) return res.status(409).json({ ok: false, error: "Set APP_BASE_URL to https://telegramagenets.vercel.app in Vercel Environment Variables, then redeploy." });
+  if (!baseUrl || !baseUrl.startsWith("https://")) return res.status(409).json({ ok: false, error: "Set APP_BASE_URL to your public HTTPS origin (for example https://your-project.vercel.app) in Vercel Environment Variables, then redeploy. On Vercel, VERCEL_URL is used automatically when APP_BASE_URL is unset." });
   try {
     const webhookUrl = baseUrl + "/api/telegram/webhook";
     const telegramResponse = await fetch("https://api.telegram.org/bot" + token + "/setWebhook", {

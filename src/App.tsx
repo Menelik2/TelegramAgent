@@ -17,7 +17,8 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [automation, setAutomation] = useState(false);
   const [mode, setMode] = useState("Allowed contacts");
-  const [status, setStatus] = useState<Status | null>(null);\n  const [dashboardToken, setDashboardToken] = useState(() => window.sessionStorage.getItem("dashboardApiToken") || "");\n  const apiRequest = (path: string, init: RequestInit = {}) => fetch(path, { ...init, headers: { ...(init.headers || {}), "x-dashboard-token": dashboardToken } });
+  const [status, setStatus] = useState<Status | null>(null);\n  const [dashboardToken, setDashboardToken] = useState(() => window.sessionStorage.getItem("dashboardApiToken") || "");\n  const apiBase = import.meta.env.VITE_API_BASE_URL || "";
+  const apiRequest = (path: string, init: RequestInit = {}) => fetch(`${apiBase}${path}`, { ...init, headers: { ...(init.headers || {}), "x-dashboard-token": dashboardToken } });
   const [draft, setDraft] = useState("");
   const [toast, setToast] = useState("");
   const selected = contacts.find(c => c.id === selectedId) ?? contacts[0];

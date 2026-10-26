@@ -49,20 +49,29 @@ app.post("/api/agent/telegram/configure-webhook", async (_req, res) => {
   const token = process.env.TELEGRAM_BOT_TOKEN || "";
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET || "";
   const baseUrl = (process.env.APP_BASE_URL || (process.env.VERCEL_URL ? "https://" + process.env.VERCEL_URL : "")).replace(/\/$/, "");
-  if (!token || !secret) return res.status(409).json({ ok: false, error: "Set TELEGRAM_BOT_TOKEN and TELEGRAM_WEBHOOK_SECRET in Vercel Environment Variables first." });
-  if (!baseUrl || !baseUrl.startsWith("https://")) return res.status(409).json({ ok: false, error: "Set APP_BASE_URL to your deployed HTTPS app URL, for example https://telegramagenets.vercel.app." });
+  if (!token || !secret) return res.status(409).json({ ok: false, error: "Missing TELEGRAM_BOT_TOKEN or TELEGRAM_WEBHOOK_SECRET in Vercel Environment Variables. Add both to Production and redeploy." });
+  if (!/^[A-Za-z0-9_-]{1,256}$/.test(secret)) return res.status(409).json({ ok: false, error: "TELEGRAM_WEBHOOK_SECRET must be 1–256 characters and contain only letters, numbers, underscores, or hyphens." });
+  if (!baseUrl || !baseUrl.startsWith("https://")) return res.status(409).json({ ok: false, error: "Set APP_BASE_URL to https://telegramagenets.vercel.app in Vercel Environment Variables, then redeploy." });
   try {
     const webhookUrl = baseUrl + "/api/telegram/webhook";
     const telegramResponse = await fetch("https://api.telegram.org/bot" + token + "/setWebhook", {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ url: webhookUrl, secret_token: secret, allowed_updates: ["business_connection", "business_message"], drop_pending_updates: false })
     });
-    const result = await telegramResponse.json() as { ok?: boolean; description?: string; result?: boolean };
+    const raw = await telegramResponse.text();
+    let result: { ok?: boolean; description?: string; result?: boolean };
+    try { result = JSON.parse(raw) as typeof result; }
+    catch { return res.status(502).json({ ok: false, error: "Telegram returned a non-JSON response while configuring the webhook. Check the bot token and try again." }); }
     if (!telegramResponse.ok || !result.ok) return res.status(502).json({ ok: false, error: result.description || "Telegram rejected webhook configuration." });
+    const infoResponse = await fetch("https://api.telegram.org/bot" + token + "/getWebhookInfo");
+    const infoRaw = await infoResponse.text();
+    let info: { ok?: boolean; result?: { url?: string; pending_update_count?: number; last_error_message?: string } } = {};
+    try { info = JSON.parse(infoRaw) as typeof info; } catch { /* The successful setWebhook response remains authoritative. */ }
     await logEvent("webhook_configured", "Telegram Business webhook registered.", {});
-    return res.json({ ok: true, webhookUrl, message: "Telegram Business webhook configured. Next, allow your test contacts and enable automation." });
+    const warning = info.result?.last_error_message;
+    return res.json({ ok: true, webhookUrl, pendingUpdates: info.result?.pending_update_count ?? 0, warning, message: warning ? "Webhook registered, but Telegram reports a delivery problem: " + warning : "Telegram Business webhook registered successfully. Next, allow a contact and enable automation." });
   } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : "Could not configure Telegram webhook." });
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : "Could not reach Telegram. Check network access and try again." });
   }
 });
 app.get("/api/agent/settings", async (_req, res) => {

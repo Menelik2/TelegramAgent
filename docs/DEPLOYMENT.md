@@ -37,6 +37,12 @@ npm run dev
 Frontend: `http://localhost:5173`  
 API health: `http://localhost:8787/api/health`
 
+Run safe API smoke checks without sending any Telegram messages:
+```bash
+API_URL=http://127.0.0.1:8787 npm run smoke
+```
+For authenticated inbox/activity checks, also set `DASHBOARD_API_TOKEN` in your shell. The script checks health, public status, webhook secret rejection, dashboard authorization, inbox retrieval, and activity retrieval. It does not prove delivery through a real Telegram Business connection; perform that final test with a permitted test contact after deployment.
+
 ## 5. Live inbox\n- Enter the `DASHBOARD_API_TOKEN` in the dashboard Settings page. The token is stored in the current browser session only.\n- Open Inbox and use **Refresh live inbox**. Real conversation history appears after Telegram Business updates have been received and the live inbox migration is applied.\n- Manual replies are sent through the connected Telegram Business connection. Treat the send confirmation as authoritative; if the message-history insert fails after delivery, the dashboard may show a temporary history gap.\n- The inbox stores message text in your Supabase project. Restrict dashboard token access and rotate it if exposed. Never put the Supabase service-role key or Telegram bot token in frontend variables.\n\n## 6. Deploy
 - Deploy the API to a persistent Node.js host with the repository root as the app root.
 - Deploy the frontend to Vercel. Set the Vercel build environment variable `VITE_API_BASE_URL` to the API's public HTTPS origin (for example, `https://your-api.example.com`, with no trailing slash), then redeploy the frontend.

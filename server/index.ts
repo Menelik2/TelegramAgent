@@ -45,6 +45,26 @@ app.get("/api/status", async (_req, res) => {
   });
 });
 app.use("/api/agent", requireDashboardAuth);
+app.post("/api/agent/telegram/configure-webhook", async (_req, res) => {
+  const token = process.env.TELEGRAM_BOT_TOKEN || "";
+  const secret = process.env.TELEGRAM_WEBHOOK_SECRET || "";
+  const baseUrl = (process.env.APP_BASE_URL || (process.env.VERCEL_URL ? "https://" + process.env.VERCEL_URL : "")).replace(/\\/$/, "");
+  if (!token || !secret) return res.status(409).json({ ok: false, error: "Set TELEGRAM_BOT_TOKEN and TELEGRAM_WEBHOOK_SECRET in Vercel Environment Variables first." });
+  if (!baseUrl || !/^https:\\/\\//i.test(baseUrl)) return res.status(409).json({ ok: false, error: "Set APP_BASE_URL to your deployed HTTPS app URL, for example https://telegramagenets.vercel.app." });
+  try {
+    const webhookUrl = baseUrl + "/api/telegram/webhook";
+    const telegramResponse = await fetch("https://api.telegram.org/bot" + token + "/setWebhook", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: webhookUrl, secret_token: secret, allowed_updates: ["business_connection", "business_message"], drop_pending_updates: false })
+    });
+    const result = await telegramResponse.json() as { ok?: boolean; description?: string; result?: boolean };
+    if (!telegramResponse.ok || !result.ok) return res.status(502).json({ ok: false, error: result.description || "Telegram rejected webhook configuration." });
+    await logEvent("webhook_configured", "Telegram Business webhook registered.", {});
+    return res.json({ ok: true, webhookUrl, message: "Telegram Business webhook configured. Next, allow your test contacts and enable automation." });
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : "Could not configure Telegram webhook." });
+  }
+});
 app.get("/api/agent/settings", async (_req, res) => {
   try {
     const enabled = await getAutomationEnabled();

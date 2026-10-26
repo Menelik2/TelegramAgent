@@ -6,7 +6,7 @@ import { decideReply, safeText } from "./policy.js";
 import { rateLimit } from "./rate-limit.js";
 import { generateReply, isAiConfigured } from "./ai.js";
 import { claimUpdate, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate } from "./store.js";
-import { addMemory, deleteMemory, getEnabledMemories, getPreferences, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setContact } from "./profile-store.js";
+import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getPreferences, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setAutomationEnabled, setContact } from "./profile-store.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -34,15 +34,28 @@ async function logEvent(kind: string, detail: string, values: { updateId?: strin
 }
 
 app.get("/api/health", (_req, res) => res.json({ ok: true, service: "telegram-agent-api", time: new Date().toISOString() }));
-app.get("/api/status", (_req, res) => res.json({
-  ok: true, automationEnabled, telegramConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_WEBHOOK_SECRET),
-  aiConfigured: isAiConfigured(), storageConfigured: isPersistentStoreConfigured(), mode: "explicit-allowlist", lastWebhookAt
-}));
+app.get("/api/status", async (_req, res) => {
+  let enabled = false;
+  try { enabled = await getAutomationEnabled(); } catch { /* Health/status remains available during storage outages. */ }
+  return res.json({
+    ok: true, automationEnabled: enabled, telegramConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_WEBHOOK_SECRET),
+    aiConfigured: isAiConfigured(), storageConfigured: isPersistentStoreConfigured(), mode: "explicit-allowlist", lastWebhookAt
+  });
+});
 app.use("/api/agent", requireDashboardAuth);
-app.get("/api/agent/settings", (_req, res) => res.json({
-  automationEnabled, mode: "explicit-allowlist", allowedContactCount: allowlist.size,
-  persistentStorage: isPersistentStoreConfigured()
-}));
+app.get("/api/agent/settings", async (_req, res) => {
+  try {
+    const enabled = await getAutomationEnabled();
+    const savedContacts = isProfileStoreConfigured() ? await listContacts() : [];
+    return res.json({
+      automationEnabled: enabled, mode: "explicit-allowlist",
+      allowedContactCount: savedContacts.length ? savedContacts.filter(contact => contact.enabled).length : allowlist.size,
+      persistentStorage: isPersistentStoreConfigured()
+    });
+  } catch {
+    return res.status(503).json({ ok: false, error: "Could not load persistent agent settings. Check Supabase configuration and migrations." });
+  }
+});
 app.get("/api/agent/contacts", async (_req, res) => {
   try {
     if (!isProfileStoreConfigured()) return res.status(503).json({ ok: false, error: "Configure Supabase and apply the agent memory/contact migration first." });
@@ -127,8 +140,19 @@ app.get("/api/activity", requireDashboardAuth, async (req, res) => {
     return res.status(503).json({ ok: false, error: "Activity storage is unavailable." });
   }
 });
-app.post("/api/agent/pause", (_req, res) => { automationEnabled = false; res.json({ ok: true, automationEnabled }); });
+app.post("/api/agent/pause", async (_req, res) => {
+  try {
+    await setAutomationEnabled(false);
+    automationEnabled = false;
+    return res.json({ ok: true, automationEnabled: false });
+  } catch {
+    return res.status(503).json({ ok: false, error: "Could not persist pause state; automation state was not changed." });
+  }
+});
 app.post("/api/agent/resume", async (_req, res) => {
+  if (process.env.VERCEL && (!isPersistentStoreConfigured() || !isProfileStoreConfigured())) {
+    return res.status(409).json({ ok: false, error: "Vercel automation requires Supabase persistence. Configure Supabase and apply every migration before enabling replies." });
+  }
   if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_WEBHOOK_SECRET || !isAiConfigured()) {
     return res.status(409).json({ ok: false, error: "Configure Telegram and AI credentials before enabling automation." });
   }
@@ -138,9 +162,23 @@ app.post("/api/agent/resume", async (_req, res) => {
     catch { return res.status(503).json({ ok: false, error: "Could not verify saved contact permissions; automation remains off." }); }
   }
   if (!hasAllowedContacts) return res.status(409).json({ ok: false, error: "Explicitly allow at least one contact in Settings before enabling replies." });
-  automationEnabled = true; return res.json({ ok: true, automationEnabled });
+  try {
+    await setAutomationEnabled(true);
+    automationEnabled = true;
+    return res.json({ ok: true, automationEnabled: true });
+  } catch {
+    return res.status(503).json({ ok: false, error: "Could not persist automation state; replies remain disabled." });
+  }
 });
-app.post("/api/agent/emergency-stop", (_req, res) => { automationEnabled = false; res.json({ ok: true, automationEnabled: false, message: "New automatic replies are disabled." }); });
+app.post("/api/agent/emergency-stop", async (_req, res) => {
+  try {
+    await setAutomationEnabled(false);
+    automationEnabled = false;
+    return res.json({ ok: true, automationEnabled: false, message: "New automatic replies are disabled." });
+  } catch {
+    return res.status(503).json({ ok: false, error: "Could not persist emergency-stop state. Check storage immediately." });
+  }
+});
 app.post("/api/agent/simulate", rateLimit({ name: "simulate", limit: 20, windowMs: 60_000 }), async (req, res) => {
   try {
     const incomingText = safeText(req.body?.text, 3000);
@@ -158,6 +196,7 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
   const expected = process.env.TELEGRAM_WEBHOOK_SECRET || "";
   const provided = req.header("x-telegram-bot-api-secret-token") || "";
   if (!expected || !provided || !constantTimeEqual(provided, expected)) return res.status(401).json({ ok: false, error: "Invalid webhook secret." });
+  if (process.env.VERCEL && !isPersistentStoreConfigured()) return res.status(503).json({ ok: false, error: "Supabase persistence is required for reliable Vercel webhook processing." });
   const update = req.body as Record<string, any>;
   const updateId = String(update?.update_id ?? "");
   if (!updateId) return res.status(400).json({ ok: false, error: "Missing update_id." });
@@ -205,7 +244,13 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
       return res.status(503).json({ ok: false, error: "Could not persist incoming message; refusing to process it." });
     }
   }
-  const decision = decideReply({ enabled: automationEnabled, allowedContact: contactAllowed, text, duplicate: false });
+  let enabledForThisUpdate = false;
+  try { enabledForThisUpdate = await getAutomationEnabled(); }
+  catch {
+    await releaseUpdate(updateId).catch(() => undefined);
+    return res.status(503).json({ ok: false, error: "Could not load persisted automation state; refusing to send." });
+  }
+  const decision = decideReply({ enabled: enabledForThisUpdate, allowedContact: contactAllowed, text, duplicate: false });
   if (!decision.allowed) {
     await logEvent("blocked", decision.reason, { updateId, senderId, chatId });
     return res.json({ ok: true, ignored: true, reason: decision.reason });
@@ -269,4 +314,9 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
   console.error("request_error", { id, message: err instanceof Error ? err.message : "unknown" });
   res.status(500).json({ ok: false, error: "Internal server error.", requestId: id });
 });
-app.listen(port, () => console.log("TelegramAgent API listening on port " + port));
+export default app;
+
+// Vercel imports the Express app as a serverless function. Only bind a port for local/standalone hosting.
+if (process.env.VERCEL !== "1") {
+  app.listen(port, () => console.log("TelegramAgent API listening on port " + port));
+}

@@ -51,6 +51,19 @@ export async function claimUpdate(updateId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+/** Release a claimed update after a known processing/delivery failure so Telegram retries can be handled. */
+export async function releaseUpdate(updateId: string): Promise<void> {
+  if (!isPersistentStoreConfigured()) {
+    memoryUpdates.delete(updateId);
+    return;
+  }
+  const response = await supabaseRequest(`telegram_updates?update_id=eq.${encodeURIComponent(updateId)}`, {
+    method: "DELETE",
+    headers: { Prefer: "return=minimal" }
+  });
+  if (!response.ok) throw new Error(`Supabase update release failed (${response.status}).`);
+}
+
 export async function recordEvent(event: AgentEvent): Promise<void> {
   const safeEvent = {
     kind: event.kind.slice(0, 64),

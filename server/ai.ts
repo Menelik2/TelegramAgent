@@ -1,15 +1,24 @@
-const DEFAULT_MODEL = "gemini-2.5-flash";
+/** Free-tier friendly default: Flash-Lite allows ~500 requests/day vs ~20 for full Flash. */
+const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 
 type GeminiResponse = {
   candidates?: Array<{
     content?: { parts?: Array<{ text?: string }> };
     finishReason?: string;
   }>;
-  error?: { message?: string; status?: string };
+  error?: { message?: string; status?: string; code?: number };
 };
 
 export function isAiConfigured(): boolean {
   return Boolean(process.env.GEMINI_API_KEY?.trim());
+}
+
+export class AiQuotaError extends Error {
+  readonly status = 429;
+  constructor(message: string) {
+    super(message);
+    this.name = "AiQuotaError";
+  }
 }
 
 export async function generateReply(input: {
@@ -74,7 +83,15 @@ export async function generateReply(input: {
 
   const result = await response.json().catch(() => ({})) as GeminiResponse;
   if (!response.ok) {
-    const detail = result.error?.message;
+    const detail = result.error?.message || "";
+    if (response.status === 429) {
+      throw new AiQuotaError(
+        `Gemini quota exceeded for model "${model}". ` +
+          `Free tier for full Flash models is often only ~20 requests/day; Flash-Lite is ~500/day. ` +
+          `Set GEMINI_MODEL=gemini-3.5-flash-lite in Vercel (or enable billing), then redeploy. ` +
+          (detail ? `Provider detail: ${detail}` : "")
+      );
+    }
     throw new Error(`Gemini API request failed (${response.status})${detail ? `: ${detail}` : "."}`);
   }
 

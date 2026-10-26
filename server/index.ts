@@ -4,7 +4,7 @@ import cors from "cors";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { decideReply, safeText } from "./policy.js";
 import { generateReply, isAiConfigured } from "./ai.js";
-import { claimUpdate, isPersistentStoreConfigured, listEvents, recordEvent, releaseUpdate } from "./store.js";
+import { claimUpdate, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate } from "./store.js";
 import { addMemory, deleteMemory, getEnabledMemories, getPreferences, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setContact } from "./profile-store.js";
 
 const app = express();
@@ -86,6 +86,36 @@ app.put("/api/agent/preferences", async (req, res) => {
   try { await savePreferences({ tone: safeText(p.tone, 100), language: safeText(p.language, 100), replyLength: safeText(p.replyLength, 40), memoryEnabled: p.memoryEnabled }); return res.json({ ok: true }); }
   catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Could not save preferences." }); }
 });
+app.get("/api/inbox", requireDashboardAuth, async (_req, res) => {
+  try { return res.json({ ok: true, persistent: isPersistentStoreConfigured(), conversations: await listInbox() }); }
+  catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Live inbox unavailable." }); }
+});
+app.get("/api/inbox/:chatId/messages", requireDashboardAuth, async (req, res) => {
+  const chatId = String(req.params.chatId || "");
+  if (!/^-?\\d{1,22}$/.test(chatId)) return res.status(400).json({ ok: false, error: "Invalid Telegram chat ID." });
+  try { return res.json({ ok: true, messages: await listConversationMessages(chatId) }); }
+  catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Conversation history unavailable." }); }
+});
+app.post("/api/inbox/:chatId/reply", requireDashboardAuth, async (req, res) => {
+  const chatId = String(req.params.chatId || "");
+  const text = safeText(req.body?.text, 4096);
+  if (!/^-?\\d{1,22}$/.test(chatId)) return res.status(400).json({ ok: false, error: "Invalid Telegram chat ID." });
+  if (!text) return res.status(400).json({ ok: false, error: "Enter a reply." });
+  if (!process.env.TELEGRAM_BOT_TOKEN) return res.status(503).json({ ok: false, error: "Telegram bot token is not configured." });
+  try {
+    const conversation = (await listInbox()).find(item => item.chatId === chatId);
+    if (!conversation) return res.status(404).json({ ok: false, error: "Conversation not found in the live inbox." });
+    const apiResponse = await fetch("https://api.telegram.org/bot" + process.env.TELEGRAM_BOT_TOKEN + "/sendMessage", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ business_connection_id: conversation.businessConnectionId, chat_id: chatId, text })
+    });
+    const body = await apiResponse.json() as { ok?: boolean; description?: string; result?: { message_id?: number; date?: number } };
+    if (!apiResponse.ok || !body.ok) return res.status(502).json({ ok: false, error: body.description || "Telegram delivery failed." });
+    await recordMessage({ businessConnectionId: conversation.businessConnectionId, chatId, senderId: conversation.senderId, senderName: conversation.senderName, username: conversation.username, direction: "outgoing", text, telegramMessageId: body.result?.message_id, createdAt: body.result?.date ? new Date(body.result.date * 1000).toISOString() : undefined });
+    await logEvent("manual_reply_sent", "Owner sent a manual Telegram reply.", { chatId, senderId: conversation.senderId });
+    return res.json({ ok: true, sent: true });
+  } catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Could not send reply." }); }
+});
 app.get("/api/activity", requireDashboardAuth, async (req, res) => {
   try {
     const limit = Number(req.query.limit || 30);
@@ -153,6 +183,20 @@ app.post("/api/telegram/webhook", async (req, res) => {
     try { const contact = (await listContacts()).find(item => item.senderId === senderId); contactAllowed = contact ? contact.enabled : allowlist.has(senderId); }
     catch { return res.status(503).json({ ok: false, error: "Contact permissions unavailable; refusing to send." }); }
   }
+  if (isPersistentStoreConfigured()) {
+    try {
+      await recordMessage({
+        updateId, telegramMessageId: Number(message.message_id) || undefined,
+        businessConnectionId: String(message.business_connection_id), chatId, senderId,
+        senderName: [message.from?.first_name, message.from?.last_name].filter(Boolean).join(" ") || String(message.from?.username || senderId),
+        username: String(message.from?.username || ""), direction: "incoming", text,
+        createdAt: message.date ? new Date(Number(message.date) * 1000).toISOString() : undefined
+      });
+    } catch (error) {
+      await releaseUpdate(updateId).catch(() => undefined);
+      return res.status(503).json({ ok: false, error: "Could not persist incoming message; refusing to process it." });
+    }
+  }
   const decision = decideReply({ enabled: automationEnabled, allowedContact: contactAllowed, text, duplicate: false });
   if (!decision.allowed) {
     await logEvent("blocked", decision.reason, { updateId, senderId, chatId });
@@ -179,6 +223,13 @@ app.post("/api/telegram/webhook", async (req, res) => {
       await logEvent("delivery_failed", body.description || "Telegram delivery failed.", { updateId, senderId, chatId });
       await releaseUpdate(updateId).catch(() => undefined);
       return res.status(502).json({ ok: false, error: "Telegram delivery failed.", detail: body.description || "Unknown Telegram API error." });
+    }
+    if (isPersistentStoreConfigured()) {
+      await recordMessage({
+        updateId, businessConnectionId: String(message.business_connection_id), chatId, senderId,
+        senderName: [message.from?.first_name, message.from?.last_name].filter(Boolean).join(" ") || String(message.from?.username || senderId),
+        username: String(message.from?.username || ""), direction: "outgoing", text: reply
+      });
     }
     await logEvent("reply_sent", "Automatic reply delivered.", { updateId, senderId, chatId });
     return res.json({ ok: true, sent: true });

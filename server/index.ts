@@ -4,7 +4,7 @@ import cors from "cors";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { decideReply, safeText } from "./policy.js";
 import { rateLimit } from "./rate-limit.js";
-import { generateReply, isAiConfigured } from "./ai.js";
+import { generateReply, isAiConfigured, AiQuotaError } from "./ai.js";
 import { claimUpdate, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate } from "./store.js";
 import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getPreferences, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setAutomationEnabled, setContact } from "./profile-store.js";
 
@@ -335,9 +335,14 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
     await logEvent("reply_sent", "Automatic reply delivered.", { updateId, senderId, chatId });
     return res.json({ ok: true, sent: true });
   } catch (error) {
-    await logEvent("reply_failed", error instanceof Error ? error.message : "Reply processing failed.", { updateId, senderId, chatId });
+    const message = error instanceof Error ? error.message : "Reply processing failed.";
+    await logEvent("reply_failed", message, { updateId, senderId, chatId });
+    // Do not release the update on quota exhaustion — Telegram retries would burn the remaining daily limit.
+    if (error instanceof AiQuotaError) {
+      return res.status(429).json({ ok: false, error: message, quotaExceeded: true });
+    }
     await releaseUpdate(updateId).catch(() => undefined);
-    return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Reply processing failed." });
+    return res.status(503).json({ ok: false, error: message });
   }
 });
 app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

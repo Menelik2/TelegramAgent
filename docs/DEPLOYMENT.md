@@ -24,8 +24,8 @@ In Vercel → Project → Settings → Environment Variables, add these for **Pr
 | `DASHBOARD_API_TOKEN` | Yes | A long, random secret used in the dashboard Settings page |
 | `TELEGRAM_BOT_TOKEN` | Yes | Token from BotFather; server-side only |
 | `TELEGRAM_WEBHOOK_SECRET` | Yes | Random secret of 1–256 characters using Telegram's allowed characters: letters, numbers, underscore, hyphen |
-| `OPENAI_API_KEY` | Yes | OpenAI API key; server-side only |
-| `OPENAI_MODEL` | No | Defaults to `gpt-4o-mini` |
+| `GEMINI_API_KEY` | Yes | Gemini API key; server-side only. Create one at https://aistudio.google.com/apikey |
+| `GEMINI_MODEL` | No | Defaults to `gemini-3.5-flash` |
 | `SUPABASE_URL` | Yes for live functionality | Supabase project URL, e.g. `https://YOUR_PROJECT.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes for live functionality | Supabase service-role key; never expose in a `VITE_*` variable |
 | `TELEGRAM_ALLOWED_USER_IDS` | Recommended | Comma-separated numeric Telegram sender IDs explicitly permitted for automatic replies |

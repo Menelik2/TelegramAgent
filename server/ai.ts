@@ -28,6 +28,7 @@ export async function generateReply(input: { incomingText: string; recentContext
     ]
   });
   const text = completion.choices[0]?.message?.content?.trim() || "";
-  if (!text || text === "[ESCALATE]") throw new Error("Reply requires owner review or could not be generated.");
+  if (!text) throw new Error("AI returned an empty reply.");
+  if (text === "[ESCALATE]") return text;
   return text.slice(0, 1800);
 }

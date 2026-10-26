@@ -99,7 +99,7 @@ app.get("/api/inbox/:chatId/messages", requireDashboardAuth, async (req, res) =>
 app.post("/api/inbox/:chatId/reply", requireDashboardAuth, async (req, res) => {
   const chatId = String(req.params.chatId || "");
   const text = safeText(req.body?.text, 4096);
-  if (!/^-?\\d{1,22}$/.test(chatId)) return res.status(400).json({ ok: false, error: "Invalid Telegram chat ID." });
+  if (!/^-?[0-9]{1,22}$/.test(chatId)) return res.status(400).json({ ok: false, error: "Invalid Telegram chat ID." });
   if (!text) return res.status(400).json({ ok: false, error: "Enter a reply." });
   if (!process.env.TELEGRAM_BOT_TOKEN) return res.status(503).json({ ok: false, error: "Telegram bot token is not configured." });
   try {

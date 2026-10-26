@@ -11,6 +11,16 @@ This app uses the official Telegram Bot API's Business connection updates (`busi
 - React + TypeScript + Vite + Tailwind CSS
 - Node.js + TypeScript + Express
 - Supabase Postgres (required for durable inbox, memory, contact permissions, and activity history)
+
+### Database choice
+
+**Supabase is the selected database for this repository.** The application already uses Supabase's PostgREST API, PostgreSQL-specific migrations, unique constraints for webhook idempotency, and persisted agent preferences. Keeping Supabase avoids a risky database rewrite and preserves the current production path.
+
+Supabase Free currently includes a 500 MB database quota per project, plus separate file-storage and bandwidth allowances; check the [current pricing page](https://supabase.com/pricing) because plan limits can change. For this text-heavy Telegram inbox, 500 MB can be enough to start, but monitor database usage and plan a retention/archive policy for message history as it grows.
+
+TiDB Cloud may offer more free row-storage capacity, but it is MySQL-compatible rather than PostgreSQL-compatible. Moving to it would require replacing the Supabase REST data-access layer, rewriting migrations and adapting unique-conflict, transaction, and persistence behavior. Do not configure TiDB alongside the current Supabase implementation: it will not work as a drop-in replacement.
+
+If the database approaches its quota, first review stored message volume and retention, add pagination/retention where appropriate, and compare paid Supabase with a properly planned TiDB migration. Keep service-role/database credentials server-side only.
 - OpenAI-compatible AI provider
 - Telegram Bot API Business integration
 

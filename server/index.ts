@@ -127,11 +127,16 @@ app.get("/api/activity", requireDashboardAuth, async (req, res) => {
   }
 });
 app.post("/api/agent/pause", (_req, res) => { automationEnabled = false; res.json({ ok: true, automationEnabled }); });
-app.post("/api/agent/resume", (_req, res) => {
+app.post("/api/agent/resume", async (_req, res) => {
   if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_WEBHOOK_SECRET || !isAiConfigured()) {
     return res.status(409).json({ ok: false, error: "Configure Telegram and AI credentials before enabling automation." });
   }
-  if (allowlist.size === 0) return res.status(409).json({ ok: false, error: "Add TELEGRAM_ALLOWED_USER_IDS explicitly before enabling replies." });
+  let hasAllowedContacts = allowlist.size > 0;
+  if (!hasAllowedContacts && isProfileStoreConfigured()) {
+    try { hasAllowedContacts = (await listContacts()).some(contact => contact.enabled); }
+    catch { return res.status(503).json({ ok: false, error: "Could not verify saved contact permissions; automation remains off." }); }
+  }
+  if (!hasAllowedContacts) return res.status(409).json({ ok: false, error: "Explicitly allow at least one contact in Settings before enabling replies." });
   automationEnabled = true; return res.json({ ok: true, automationEnabled });
 });
 app.post("/api/agent/emergency-stop", (_req, res) => { automationEnabled = false; res.json({ ok: true, automationEnabled: false, message: "New automatic replies are disabled." }); });

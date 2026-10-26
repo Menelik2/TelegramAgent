@@ -230,7 +230,7 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
   let contactAllowed = allowlist.has(senderId);
   if (isProfileStoreConfigured()) {
     try { const contact = (await listContacts()).find(item => item.senderId === senderId); contactAllowed = contact ? contact.enabled : allowlist.has(senderId); }
-    catch { return res.status(503).json({ ok: false, error: "Contact permissions unavailable; refusing to send." }); }
+    catch { await releaseUpdate(updateId).catch(() => undefined); return res.status(503).json({ ok: false, error: "Contact permissions unavailable; refusing to send." }); }
   }
   if (isPersistentStoreConfigured()) {
     try {

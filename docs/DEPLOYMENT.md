@@ -25,7 +25,7 @@ Telegram sends the secret in `X-Telegram-Bot-Api-Secret-Token`. The API verifies
 ## 3. Configure environment
 Copy `.env.example` to your local environment or configure secrets in your host's dashboard. Set `TELEGRAM_ALLOWED_USER_IDS` to a comma-separated allowlist of numeric Telegram sender IDs. Do not use display names or usernames as authorization identifiers.
 
-Set `OPENAI_API_KEY` and optionally `OPENAI_MODEL`. Never expose the key through a Vite `VITE_*` variable or browser bundle. For persistent webhook idempotency and activity logs, apply `supabase/migrations/20261026000000_agent_persistence.sql` in the Supabase SQL Editor and set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on the API host only. Without these, the app uses a non-durable in-memory fallback.
+Set `OPENAI_API_KEY` and optionally `OPENAI_MODEL`. Never expose the key through a Vite `VITE_*` variable or browser bundle. For persistent webhook idempotency and activity logs, apply `supabase/migrations/20261026000000_agent_persistence.sql`. For owner-managed contact permissions, saved memories, and AI personality preferences, also apply `supabase/migrations/20261027000000_agent_memory_contacts.sql`. For the live inbox and manual replies, apply `supabase/migrations/20261028000000_live_inbox.sql`. Run all migrations in timestamp order. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on the API host only. Without Supabase, the live inbox and saved memories are unavailable.
 
 ## 4. Run locally
 ```bash
@@ -37,7 +37,7 @@ npm run dev
 Frontend: `http://localhost:5173`  
 API health: `http://localhost:8787/api/health`
 
-## 5. Deploy
+## 5. Live inbox\n- Enter the `DASHBOARD_API_TOKEN` in the dashboard Settings page. The token is stored in the current browser session only.\n- Open Inbox and use **Refresh live inbox**. Real conversation history appears after Telegram Business updates have been received and the live inbox migration is applied.\n- Manual replies are sent through the connected Telegram Business connection. Treat the send confirmation as authoritative; if the message-history insert fails after delivery, the dashboard may show a temporary history gap.\n- The inbox stores message text in your Supabase project. Restrict dashboard token access and rotate it if exposed. Never put the Supabase service-role key or Telegram bot token in frontend variables.\n\n## 6. Deploy
 - Deploy the API to a persistent Node.js host with the repository root as the app root.
 - Deploy the frontend to Vercel. Set the Vercel build environment variable `VITE_API_BASE_URL` to the API's public HTTPS origin (for example, `https://your-api.example.com`, with no trailing slash), then redeploy the frontend.
 - On the API host set `FRONTEND_URL` to the exact Vercel site origin, plus `DASHBOARD_API_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_ALLOWED_USER_IDS`, and `OPENAI_API_KEY`. If using Supabase, also configure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`.

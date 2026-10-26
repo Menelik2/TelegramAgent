@@ -139,7 +139,9 @@ export async function recordMessage(message: AgentMessage): Promise<void> {
       ...(message.createdAt ? { created_at: message.createdAt } : {})
     })
   });
-  if (response.status === 409) return;\n  if (!response.ok) throw new Error(`Supabase message write failed (${response.status}).`);
+  // Telegram may retry an update after its incoming message was already persisted.
+  if (response.status === 409) return;
+  if (!response.ok) throw new Error(`Supabase message write failed (${response.status}).`);
 }
 export async function listInbox(): Promise<InboxConversation[]> {
   if (!isPersistentStoreConfigured()) throw new Error("Configure Supabase to load the live inbox.");

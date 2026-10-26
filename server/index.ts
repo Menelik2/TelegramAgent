@@ -231,6 +231,10 @@ app.post("/api/telegram/webhook", async (req, res) => {
       recentContext: contextParts.join("\n\n") || undefined,
       replyLength: preferences.replyLength
     });
+    if (reply === "[ESCALATE]") {
+      await logEvent("owner_review_required", "AI marked this message for owner review; no automatic reply was sent.", { updateId, senderId, chatId });
+      return res.json({ ok: true, escalated: true, sent: false });
+    }
     const apiResponse = await fetch("https://api.telegram.org/bot" + process.env.TELEGRAM_BOT_TOKEN + "/sendMessage", {
       method: "POST",
       headers: { "content-type": "application/json" },

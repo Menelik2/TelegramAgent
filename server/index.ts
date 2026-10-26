@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { decideReply, safeText } from "./policy.js";
+import { rateLimit } from "./rate-limit.js";
 import { generateReply, isAiConfigured } from "./ai.js";
 import { claimUpdate, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate } from "./store.js";
 import { addMemory, deleteMemory, getEnabledMemories, getPreferences, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setContact } from "./profile-store.js";
@@ -96,7 +97,7 @@ app.get("/api/inbox/:chatId/messages", requireDashboardAuth, async (req, res) =>
   try { return res.json({ ok: true, messages: await listConversationMessages(chatId) }); }
   catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Conversation history unavailable." }); }
 });
-app.post("/api/inbox/:chatId/reply", requireDashboardAuth, async (req, res) => {
+app.post("/api/inbox/:chatId/reply", rateLimit({ name: "manual-reply", limit: 30, windowMs: 60_000 }), requireDashboardAuth, async (req, res) => {
   const chatId = String(req.params.chatId || "");
   const text = safeText(req.body?.text, 4096);
   if (!/^-?[0-9]{1,22}$/.test(chatId)) return res.status(400).json({ ok: false, error: "Invalid Telegram chat ID." });
@@ -140,7 +141,7 @@ app.post("/api/agent/resume", async (_req, res) => {
   automationEnabled = true; return res.json({ ok: true, automationEnabled });
 });
 app.post("/api/agent/emergency-stop", (_req, res) => { automationEnabled = false; res.json({ ok: true, automationEnabled: false, message: "New automatic replies are disabled." }); });
-app.post("/api/agent/simulate", async (req, res) => {
+app.post("/api/agent/simulate", rateLimit({ name: "simulate", limit: 20, windowMs: 60_000 }), async (req, res) => {
   try {
     const incomingText = safeText(req.body?.text, 3000);
     if (!incomingText) return res.status(400).json({ ok: false, error: "Enter a message to simulate." });
@@ -153,7 +154,7 @@ app.post("/api/agent/simulate", async (req, res) => {
   }
 });
 
-app.post("/api/telegram/webhook", async (req, res) => {
+app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 120, windowMs: 60_000 }), async (req, res) => {
   const expected = process.env.TELEGRAM_WEBHOOK_SECRET || "";
   const provided = req.header("x-telegram-bot-api-secret-token") || "";
   if (!expected || !provided || !constantTimeEqual(provided, expected)) return res.status(401).json({ ok: false, error: "Invalid webhook secret." });

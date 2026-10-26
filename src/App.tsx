@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Activity, Bot, BrainCircuit, Check, ChevronDown, CircleHelp, Clock3, Command, ContactRound, Gauge, MessageCircle, Moon, MoreHorizontal, Pause, Play, Plus, Search, Send, Settings2, ShieldCheck, Sparkles, Square, Zap } from "lucide-react";
 
 type Status = { ok: boolean; automationEnabled: boolean; telegramConfigured: boolean; aiConfigured: boolean; storageConfigured?: boolean; mode: string };
-type Contact = { id: string; name: string; handle: string; initials: string; color: string; last: string; time: string; unread?: number; allowed: boolean; messages: { from: "them" | "ai"; text: string; time: string }[] };
+type Contact = { id: string; senderId?: string; name: string; handle: string; initials: string; color: string; last: string; time: string; unread?: number; allowed: boolean; messages: { from: "them" | "ai"; text: string; time: string }[] };
 const initialContacts: Contact[] = [
   { id: "1", name: "Mimi Bekele", handle: "@mimi_b", initials: "MB", color: "lilac", last: "Are we still meeting this afternoon?", time: "2m", unread: 2, allowed: true, messages: [{ from: "them", text: "Hey! Hope your morning is going well ☀️", time: "9:14" }, { from: "ai", text: "Hey Mimi! It is, thank you 😊 Hope yours is too!", time: "9:15" }, { from: "them", text: "Are we still meeting this afternoon?", time: "9:18" }] },
   { id: "2", name: "Daniel T.", handle: "@daniel_t", initials: "DT", color: "blue", last: "Sent you the notes from yesterday", time: "18m", allowed: false, messages: [{ from: "them", text: "Sent you the notes from yesterday.", time: "8:52" }] },
@@ -18,6 +18,8 @@ export default function App() {
   const [automation, setAutomation] = useState(false);
   const [mode, setMode] = useState("Allowed contacts");
   const [status, setStatus] = useState<Status | null>(null);
+  const [inboxLive, setInboxLive] = useState(false);
+  const [inboxLoading, setInboxLoading] = useState(false);
   const [dashboardToken, setDashboardToken] = useState(() => window.sessionStorage.getItem("dashboardApiToken") || "");
   const apiBase = import.meta.env.VITE_API_BASE_URL || "";
   const apiRequest = (path: string, init: RequestInit = {}) => fetch(`${apiBase}${path}`, { ...init, headers: { ...(init.headers || {}), "x-dashboard-token": dashboardToken } });
@@ -27,13 +29,80 @@ export default function App() {
   const filtered = useMemo(() => contacts.filter(c => (c.name + c.handle).toLowerCase().includes(query.toLowerCase())), [contacts, query]);
   useEffect(() => { fetch(`${apiBase}/api/status`).then(r => r.json()).then((value: Status) => { setStatus(value); setAutomation(value.automationEnabled); }).catch(() => setStatus(null)); }, [apiBase]);
   const flash = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2600); };
-  const toggleContact = (id: string) => setContacts(prev => prev.map(c => c.id === id ? { ...c, allowed: !c.allowed } : c));
-  const sendDemo = () => {
-    if (!draft.trim()) return;
-    setContacts(prev => prev.map(c => c.id === selectedId ? { ...c, messages: [...c.messages, { from: "ai", text: draft.trim(), time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }], last: draft.trim() } : c));
+  const refreshLiveInbox = async () => {
+    if (!dashboardToken) { flash("Enter your dashboard API token in Settings first."); return; }
+    setInboxLoading(true);
+    try {
+      const [inboxResponse, contactsResponse] = await Promise.all([
+        apiRequest("/api/inbox"),
+        apiRequest("/api/agent/contacts")
+      ]);
+      const inboxData = await inboxResponse.json();
+      if (!inboxResponse.ok) throw new Error(inboxData.error || "Live inbox could not be loaded.");
+      const contactData = contactsResponse.ok ? await contactsResponse.json() : { contacts: [] };
+      const permissions = new Map<string, boolean>((contactData.contacts || []).map((x: {senderId:string;enabled:boolean}) => [x.senderId, x.enabled]));
+      const colors = ["lilac", "blue", "mint", "peach"];
+      const mapped: Contact[] = (inboxData.conversations || []).map((item: {chatId:string;senderId?:string;senderName:string;username:string;lastMessage:string;lastMessageAt:string;lastDirection:string}, i:number) => ({
+        id: item.chatId, senderId: item.senderId, name: item.senderName || item.username || item.chatId,
+        handle: item.username ? "@" + item.username : item.chatId, initials: (item.senderName || item.username || item.chatId).split(/\\s+/).slice(0,2).map((s:string)=>s[0]).join("").toUpperCase(),
+        color: colors[i % colors.length], last: item.lastMessage, time: new Date(item.lastMessageAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}),
+        allowed: item.senderId ? permissions.get(item.senderId) === true : false, messages: []
+      }));
+      setInboxLive(true);
+      if (mapped.length) {
+        setContacts(mapped);
+        setSelectedId(previous => mapped.some(item => item.id === previous) ? previous : mapped[0].id);
+      } else {
+        setContacts([]);
+        setSelectedId("");
+      }
+      flash(mapped.length ? "Live Telegram inbox loaded." : "No Telegram conversations yet. Send or receive a business message first.");
+    } catch (error) {
+      flash(error instanceof Error ? error.message : "Live inbox unavailable.");
+    } finally { setInboxLoading(false); }
+  };
+  useEffect(() => {
+    if (!dashboardToken) { setInboxLive(false); return; }
+    const timer = window.setTimeout(() => { void refreshLiveInbox(); }, 700);
+    return () => window.clearTimeout(timer);
+  }, [dashboardToken, apiBase]);
+  useEffect(() => {
+    if (page !== "Inbox" || !inboxLive || !selectedId || !dashboardToken) return;
+    let active = true;
+    apiRequest("/api/inbox/" + encodeURIComponent(selectedId) + "/messages").then(async response => {
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not load conversation.");
+      if (!active) return;
+      setContacts(previous => previous.map(contact => contact.id === selectedId ? { ...contact, messages: (data.messages || []).map((m: {direction:string;text:string;createdAt?:string}) => ({ from: m.direction === "outgoing" ? "ai" as const : "them" as const, text: m.text, time: m.createdAt ? new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) : "" })) } : contact));
+    }).catch(error => { if (active) flash(error instanceof Error ? error.message : "Could not load conversation."); });
+    return () => { active = false; };
+  }, [page, inboxLive, selectedId, dashboardToken]);
+  const toggleContact = (id: string) => {
+    const contact = contacts.find(item => item.id === id);
+    if (!contact) return;
+    if (inboxLive && contact.senderId) {
+      const enabled = !contact.allowed;
+      apiRequest("/api/agent/contacts/" + encodeURIComponent(contact.senderId), {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled,note:"Owner-managed allowlist"})})
+        .then(async response => { const data = await response.json(); if (!response.ok) throw new Error(data.error || "Permission update failed."); setContacts(previous => previous.map(item => item.id === id ? {...item,allowed:enabled}:item)); flash(enabled ? "Contact allowed for automatic replies." : "Contact set to manual-only."); })
+        .catch(error => flash(error instanceof Error ? error.message : "Permission update failed."));
+    } else if (!inboxLive) setContacts(previous => previous.map(item => item.id === id ? { ...item, allowed: !item.allowed } : item));
+    else flash("This conversation has no sender ID, so automatic replies cannot be enabled.");
+  };
+  const sendDemo = async () => {
+    if (!draft.trim() || !selected) return;
+    if (inboxLive) {
+      try {
+        const response = await apiRequest("/api/inbox/" + encodeURIComponent(selected.id) + "/reply", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:draft.trim()})});
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Telegram reply failed.");
+        setDraft(""); flash("Reply sent through Telegram."); await refreshLiveInbox();
+      } catch (error) { flash(error instanceof Error ? error.message : "Telegram reply failed."); }
+      return;
+    }
+    setContacts(previous => previous.map(item => item.id === selectedId ? { ...item, messages: [...item.messages, { from: "ai", text: draft.trim(), time: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }], last: draft.trim() } : item));
     setDraft(""); flash("Preview added locally. Connect Telegram to send real messages.");
   };
-  return <div className="app-shell">
+    return <div className="app-shell">
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark"><Bot size={21}/></div><div><strong>telegram<span>agent</span></strong><small>PERSONAL AI</small></div><button className="icon-button side-more" aria-label="More"><MoreHorizontal size={18}/></button></div>
       <div className="workspace"><div className="workspace-avatar">M</div><div className="workspace-text"><b>My assistant</b><span>Personal workspace</span></div><ChevronDown size={15} className="subtle"/></div>

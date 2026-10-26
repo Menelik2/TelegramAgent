@@ -18,6 +18,8 @@ export default function App() {
   const [automation, setAutomation] = useState(false);
   const [mode, setMode] = useState("Allowed contacts");
   const [status, setStatus] = useState<Status | null>(null);
+  const [activityEvents, setActivityEvents] = useState<Array<{id?:number;kind:string;detail:string;createdAt?:string}>>([]);
+  const [liveMetrics, setLiveMetrics] = useState({ messages: 0, replies: 0, review: 0 });
   const [inboxLive, setInboxLive] = useState(false);
   const [inboxLoading, setInboxLoading] = useState(false);
   const [dashboardToken, setDashboardToken] = useState(() => window.sessionStorage.getItem("dashboardApiToken") || "");
@@ -29,6 +31,38 @@ export default function App() {
   const filtered = useMemo(() => contacts.filter(c => (c.name + c.handle).toLowerCase().includes(query.toLowerCase())), [contacts, query]);
   useEffect(() => { fetch(`${apiBase}/api/status`).then(r => r.json()).then((value: Status) => { setStatus(value); setAutomation(value.automationEnabled); }).catch(() => setStatus(null)); }, [apiBase]);
   useEffect(() => { if (dashboardToken) window.sessionStorage.setItem("dashboardApiToken", dashboardToken); else window.sessionStorage.removeItem("dashboardApiToken"); }, [dashboardToken]);
+  useEffect(() => {
+    if (!dashboardToken) {
+      setActivityEvents([]);
+      setLiveMetrics({ messages: 0, replies: 0, review: 0 });
+      return;
+    }
+    let active = true;
+    Promise.all([apiRequest("/api/activity?limit=100"), apiRequest("/api/inbox")])
+      .then(async ([activityResponse, inboxResponse]) => {
+        const activityData = await activityResponse.json();
+        const inboxData = await inboxResponse.json();
+        if (!activityResponse.ok) throw new Error(activityData.error || "Activity is unavailable.");
+        if (!inboxResponse.ok) throw new Error(inboxData.error || "Inbox metrics are unavailable.");
+        const events = (activityData.events || []) as Array<{id?:number;kind:string;detail:string;createdAt?:string}>;
+        const conversations = (inboxData.conversations || []) as Array<{messageCount?:number}>;
+        if (!active) return;
+        setActivityEvents(events);
+        setLiveMetrics({
+          messages: conversations.reduce((total, item) => total + Number(item.messageCount || 0), 0),
+          replies: events.filter(event => event.kind === "reply_sent" || event.kind === "manual_reply_sent").length,
+          review: events.filter(event => event.kind === "owner_review_required" || event.kind === "blocked" || event.kind === "delivery_failed").length
+        });
+      })
+      .catch(() => {
+        if (active) {
+          setActivityEvents([]);
+          setLiveMetrics({ messages: 0, replies: 0, review: 0 });
+        }
+      });
+    return () => { active = false; };
+  }, [dashboardToken, apiBase]);
+
   const flash = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2600); };
   const refreshLiveInbox = async () => {
     if (!dashboardToken) { flash("Enter your dashboard API token in Settings first."); return; }
@@ -108,7 +142,7 @@ export default function App() {
       <div className="brand"><div className="brand-mark"><Bot size={21}/></div><div><strong>telegram<span>agent</span></strong><small>PERSONAL AI</small></div><button className="icon-button side-more" aria-label="More"><MoreHorizontal size={18}/></button></div>
       <div className="workspace"><div className="workspace-avatar">M</div><div className="workspace-text"><b>My assistant</b><span>Personal workspace</span></div><ChevronDown size={15} className="subtle"/></div>
       <div className="nav-label">WORKSPACE</div>
-      <nav>{nav.map(item => <button key={item.label} onClick={() => setPage(item.label)} className={"nav-item " + (page === item.label ? "active" : "")}><item.icon size={18}/><span>{item.label}</span>{item.label === "Inbox" && <em>4</em>}</button>)}</nav>
+      <nav>{nav.map(item => <button key={item.label} onClick={() => setPage(item.label)} className={"nav-item " + (page === item.label ? "active" : "")}><item.icon size={18}/><span>{item.label}</span>{item.label === "Inbox" && <em>{inboxLive ? contacts.length : "—"}</em>}</button>)}</nav>
       <div className="sidebar-bottom"><div className="upgrade"><div className="upgrade-icon"><Sparkles size={17}/></div><b>Your assistant, your rules.</b><p>Thoughtful replies. Complete control.</p><button onClick={() => setPage("Settings")}>Configure agent <span>↗</span></button></div><div className="user-row"><div className="user-avatar">M</div><div><b>Menelik</b><small>Personal account</small></div><MoreHorizontal size={18} className="subtle"/></div></div>
     </aside>
     <main className="main-area">
@@ -121,8 +155,8 @@ export default function App() {
         </div> : page === "Overview" ? <><div className="welcome-row"><div><div className="eyebrow"><span className="eyebrow-dot"></span> YOUR PERSONAL AI ASSISTANT</div><h1>Good morning, Menelik <span>✳</span></h1><p>Your conversations, a little more effortless.</p></div><button className={"primary-button " + (automation ? "running" : "")} onClick={() => { const next = !automation; apiRequest(next ? "/api/agent/resume" : "/api/agent/pause", { method: "POST" }).then(async r => { const data = await r.json(); if (!r.ok) throw new Error(data.error || "Request failed"); setAutomation(data.automationEnabled); flash(data.automationEnabled ? "Automatic replies enabled on server." : "Automation paused on server."); }).catch(error => flash(error instanceof Error ? error.message : "Could not update automation.")); }}><span className="status-dot"></span>{automation ? "Pause automation" : "Start automation"} <ChevronDown size={15}/></button></div>
         <div className="notice-card"><div className="notice-icon"><ShieldCheck size={20}/></div><div className="notice-copy"><b>{automation ? "Automatic replies are enabled" : "You're in safe mode"}</b><p>{automation ? "The server replies only to explicitly permitted contacts and escalates sensitive messages." : "Your agent won't send messages until Telegram is connected and you explicitly enable permitted contacts."}</p></div><button onClick={() => setPage("Automation")}>Review settings <span>→</span></button></div>
         <div className="section-head"><div><h2>Your overview</h2><p>A quiet look at what your assistant has been up to.</p></div><button className="range-select">Last 7 days <ChevronDown size={14}/></button></div>
-        <div className="stats-grid"><Stat icon={<MessageCircle size={17}/>} label="Messages processed" value="128" trend="+12.8%" tone="violet" note="vs. last week"/><Stat icon={<Sparkles size={17}/>} label="AI replies sent" value="86" trend="+8.2%" tone="green" note="vs. last week"/><Stat icon={<Clock3 size={17}/>} label="Time saved" value="2.4h" trend="+18 min" tone="blue" note="estimated"/><Stat icon={<ShieldCheck size={17}/>} label="Needs your attention" value="3" trend="Review" tone="amber" note="pending items"/></div>
-        <div className="lower-grid"><section className="panel activity-panel"><div className="panel-heading"><div><h3>Recent activity</h3><p>Here's what's happening with your agent.</p></div><button className="icon-button" aria-label="Activity options"><MoreHorizontal size={18}/></button></div><div className="activity-list"><ActivityRow icon={<MessageCircle size={15}/>} color="violet" title="Reply suggested for Mimi Bekele" detail="“Are we still meeting this afternoon?”" time="2 min ago" badge="Needs review"/><ActivityRow icon={<Check size={15}/>} color="green" title="Conversation context updated" detail="Selam Work · preferences remembered" time="18 min ago"/><ActivityRow icon={<ShieldCheck size={15}/>} color="amber" title="Automation blocked a reply" detail="Contact is not on your allowlist" time="42 min ago" badge="Protected"/><ActivityRow icon={<Activity size={15}/>} color="blue" title="Agent health check completed" detail="All local services responding" time="1 hr ago"/></div><button className="text-link" onClick={() => setPage("Inbox")}>View all conversations <span>→</span></button></section>
+        <div className="stats-grid"><Stat icon={<MessageCircle size={17}/>} label="Stored messages" value={dashboardToken ? String(liveMetrics.messages) : "—"} trend={dashboardToken ? "Live" : "Connect"} tone="violet" note="from Telegram inbox"/><Stat icon={<Sparkles size={17}/>} label="Recent replies sent" value={dashboardToken ? String(liveMetrics.replies) : "—"} trend={dashboardToken ? "Live" : "Connect"} tone="green" note="in latest 100 events"/><Stat icon={<Clock3 size={17}/>} label="Time saved" value="—" trend="Not tracked" tone="blue" note="no estimate shown"/><Stat icon={<ShieldCheck size={17}/>} label="Review flags" value={dashboardToken ? String(liveMetrics.review) : "—"} trend={dashboardToken ? "Recent" : "Connect"} tone="amber" note="in latest 100 events"/></div>
+        <div className="lower-grid"><section className="panel activity-panel"><div className="panel-heading"><div><h3>Recent activity</h3><p>Here's what's happening with your agent.</p></div><button className="icon-button" aria-label="Activity options"><MoreHorizontal size={18}/></button></div><div className="activity-list">{activityEvents.length ? activityEvents.slice(0,4).map((event,i)=><ActivityRow key={event.id ?? i} icon={<Activity size={15}/>} color={event.kind.includes("blocked") || event.kind.includes("failed") || event.kind.includes("review") ? "amber" : event.kind.includes("sent") ? "green" : "violet"} title={event.kind.replace(/_/g," ").replace(/^\w/,letter=>letter.toUpperCase())} detail={event.detail} time={event.createdAt ? new Date(event.createdAt).toLocaleString([], {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"}) : "Recent"} badge={event.kind==="blocked" ? "Protected" : event.kind.includes("failed") ? "Failed" : undefined}/> ) : <p className="helper-text" style={{padding:16}}>{dashboardToken ? "No recent stored activity. Telegram events will appear here after the webhook is configured." : "Enter your dashboard token in Settings to load real activity."}</p>}</div><button className="text-link" onClick={() => setPage("Inbox")}>View all conversations <span>→</span></button></section>
         <section className="panel right-panel"><div className="panel-heading"><div><h3>Agent health</h3><p>Your assistant at a glance.</p></div><span className="live-label"><span className="dot green"></span> ONLINE</span></div><div className="health-summary"><div className="health-ring"><div><b>{status?.aiConfigured ? "98" : "—"}</b><span>HEALTH</span></div></div><div className="health-copy"><b>{status?.aiConfigured ? "Looking good" : "Almost ready"}</b><p>{status?.aiConfigured ? "AI provider is configured." : "Add your AI key and Telegram token to connect live services."}</p></div></div><div className="service-list"><Service name="Telegram connection" state={status?.telegramConfigured ? "Connected" : "Setup needed"} good={!!status?.telegramConfigured}/><Service name="AI provider" state={status?.aiConfigured ? "Configured" : "API key needed"} good={!!status?.aiConfigured}/><Service name="Contact permissions" state="Allowlist mode" good={true}/></div><button className="outline-full" onClick={() => setPage("Settings")}>Open system settings <span>↗</span></button></section></div>
         <div className="bottom-tip"><div className="tip-spark"><Sparkles size={18}/></div><div><b>A little more you, in every reply.</b><p>Teach your assistant your tone, favorite phrases, and how you like to show up.</p></div><button onClick={() => setPage("AI personality")}>Personalize your AI <span>→</span></button></div>
         </> : <SettingsPage page={page} setPage={setPage} mode={mode} setMode={setMode} contacts={contacts} toggleContact={toggleContact} automation={automation} setAutomation={setAutomation} flash={flash} status={status} dashboardToken={dashboardToken} setDashboardToken={(value) => { setDashboardToken(value); window.sessionStorage.setItem("dashboardApiToken", value); }} apiRequest={apiRequest}/>}

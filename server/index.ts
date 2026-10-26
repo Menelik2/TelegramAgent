@@ -92,7 +92,7 @@ app.get("/api/inbox", requireDashboardAuth, async (_req, res) => {
 });
 app.get("/api/inbox/:chatId/messages", requireDashboardAuth, async (req, res) => {
   const chatId = String(req.params.chatId || "");
-  if (!/^-?\\d{1,22}$/.test(chatId)) return res.status(400).json({ ok: false, error: "Invalid Telegram chat ID." });
+  if (!/^-?[0-9]{1,22}$/.test(chatId)) return res.status(400).json({ ok: false, error: "Invalid Telegram chat ID." });
   try { return res.json({ ok: true, messages: await listConversationMessages(chatId) }); }
   catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Conversation history unavailable." }); }
 });

@@ -5,7 +5,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { decideReply, safeText } from "./policy.js";
 import { rateLimit } from "./rate-limit.js";
 import { generateReply, isAiConfigured, AiQuotaError } from "./ai.js";
-import { claimUpdate, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate } from "./store.js";
+import { claimUpdate, getLastActivityAt, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate } from "./store.js";
 import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getPreferences, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setAutomationEnabled, setContact } from "./profile-store.js";
 
 const app = express();
@@ -15,9 +15,7 @@ app.use(cors({ origin: (process.env.FRONTEND_URL || "http://localhost:5173").spl
 app.use(express.json({ limit: "256kb" }));
 const port = Number(process.env.PORT || 8787);
 const allowlist = new Set((process.env.TELEGRAM_ALLOWED_USER_IDS || "").split(",").map(s => s.trim()).filter(Boolean));
-/** Owner Telegram user IDs — never auto-reply to these (your own texts). */
 const ownerUserIds = new Set((process.env.TELEGRAM_OWNER_USER_IDS || "").split(",").map(s => s.trim()).filter(Boolean));
-/** business_connection_id -> owner user id, learned from Telegram business_connection updates */
 const businessOwnerByConnection = new Map<string, string>();
 let automationEnabled = false;
 let lastWebhookAt: string | null = null;
@@ -41,10 +39,22 @@ async function logEvent(kind: string, detail: string, values: { updateId?: strin
 app.get("/api/health", (_req, res) => res.json({ ok: true, service: "telegram-agent-api", time: new Date().toISOString() }));
 app.get("/api/status", async (_req, res) => {
   let enabled = false;
-  try { enabled = await getAutomationEnabled(); } catch { /* Health/status remains available during storage outages. */ }
+  let lastActivityAt: string | null = null;
+  try { enabled = await getAutomationEnabled(); } catch { /* */ }
+  try { lastActivityAt = await getLastActivityAt(); } catch { /* */ }
+  const baseUrl = (process.env.APP_BASE_URL || (process.env.VERCEL_URL ? "https://" + process.env.VERCEL_URL : "")).replace(/\/$/, "");
   return res.json({
-    ok: true, automationEnabled: enabled, telegramConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_WEBHOOK_SECRET),
-    aiConfigured: isAiConfigured(), storageConfigured: isPersistentStoreConfigured(), mode: "explicit-allowlist", lastWebhookAt
+    ok: true,
+    automationEnabled: enabled,
+    telegramConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_WEBHOOK_SECRET),
+    aiConfigured: isAiConfigured(),
+    storageConfigured: isPersistentStoreConfigured(),
+    mode: "explicit-allowlist",
+    lastWebhookAt: lastWebhookAt || lastActivityAt,
+    lastActivityAt,
+    appBaseUrl: baseUrl || null,
+    webhookPath: "/api/telegram/webhook",
+    ownerIdsConfigured: ownerUserIds.size > 0
   });
 });
 app.use("/api/agent", requireDashboardAuth);
@@ -54,7 +64,7 @@ app.post("/api/agent/telegram/configure-webhook", async (_req, res) => {
   const baseUrl = (process.env.APP_BASE_URL || (process.env.VERCEL_URL ? "https://" + process.env.VERCEL_URL : "")).replace(/\/$/, "");
   if (!token || !secret) return res.status(409).json({ ok: false, error: "Missing TELEGRAM_BOT_TOKEN or TELEGRAM_WEBHOOK_SECRET in Vercel Environment Variables. Add both to Production and redeploy." });
   if (!/^[A-Za-z0-9_-]{1,256}$/.test(secret)) return res.status(409).json({ ok: false, error: "TELEGRAM_WEBHOOK_SECRET must be 1–256 characters and contain only letters, numbers, underscores, or hyphens." });
-  if (!baseUrl || !baseUrl.startsWith("https://")) return res.status(409).json({ ok: false, error: "Set APP_BASE_URL to your public HTTPS origin (for example https://your-project.vercel.app) in Vercel Environment Variables, then redeploy. On Vercel, VERCEL_URL is used automatically when APP_BASE_URL is unset." });
+  if (!baseUrl || !baseUrl.startsWith("https://")) return res.status(409).json({ ok: false, error: "Set APP_BASE_URL to your public HTTPS origin (for example https://telegramagenets.vercel.app) in Vercel Environment Variables, then redeploy." });
   try {
     const webhookUrl = baseUrl + "/api/telegram/webhook";
     const telegramResponse = await fetch("https://api.telegram.org/bot" + token + "/setWebhook", {
@@ -64,19 +74,39 @@ app.post("/api/agent/telegram/configure-webhook", async (_req, res) => {
     const raw = await telegramResponse.text();
     let result: { ok?: boolean; description?: string; result?: boolean };
     try { result = JSON.parse(raw) as typeof result; }
-    catch { return res.status(502).json({ ok: false, error: "Telegram returned a non-JSON response while configuring the webhook. Check the bot token and try again." }); }
+    catch { return res.status(502).json({ ok: false, error: "Telegram returned a non-JSON response while configuring the webhook." }); }
     if (!telegramResponse.ok || !result.ok) return res.status(502).json({ ok: false, error: result.description || "Telegram rejected webhook configuration." });
     const infoResponse = await fetch("https://api.telegram.org/bot" + token + "/getWebhookInfo");
     const infoRaw = await infoResponse.text();
     let info: { ok?: boolean; result?: { url?: string; pending_update_count?: number; last_error_message?: string } } = {};
-    try { info = JSON.parse(infoRaw) as typeof info; } catch { /* The successful setWebhook response remains authoritative. */ }
+    try { info = JSON.parse(infoRaw) as typeof info; } catch { /* */ }
     await logEvent("webhook_configured", "Telegram webhook registered (business + private messages).", {});
     const warning = info.result?.last_error_message;
-    return res.json({ ok: true, webhookUrl, pendingUpdates: info.result?.pending_update_count ?? 0, warning, message: warning ? "Webhook registered, but Telegram reports a delivery problem: " + warning : "Telegram webhook registered successfully. Private bot chats and Business messages are enabled. Next, allow a contact and enable automation." });
+    return res.json({ ok: true, webhookUrl, pendingUpdates: info.result?.pending_update_count ?? 0, warning, message: warning ? "Webhook registered, but Telegram reports a delivery problem: " + warning : "Telegram webhook registered successfully. Next, allow a contact and enable automation." });
   } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : "Could not reach Telegram. Check network access and try again." });
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : "Could not reach Telegram." });
   }
 });
+
+app.get("/api/agent/telegram/webhook-info", async (_req, res) => {
+  const token = process.env.TELEGRAM_BOT_TOKEN || "";
+  if (!token) return res.status(409).json({ ok: false, error: "TELEGRAM_BOT_TOKEN is not configured." });
+  try {
+    const infoResponse = await fetch("https://api.telegram.org/bot" + token + "/getWebhookInfo");
+    const info = await infoResponse.json() as { ok?: boolean; result?: Record<string, unknown>; description?: string };
+    if (!infoResponse.ok || !info.ok) return res.status(502).json({ ok: false, error: info.description || "Could not read webhook info." });
+    const baseUrl = (process.env.APP_BASE_URL || (process.env.VERCEL_URL ? "https://" + process.env.VERCEL_URL : "")).replace(/\/$/, "");
+    return res.json({
+      ok: true,
+      expectedUrl: baseUrl ? baseUrl + "/api/telegram/webhook" : null,
+      webhook: info.result || {},
+      matchesExpected: Boolean(baseUrl && info.result && String(info.result.url || "") === baseUrl + "/api/telegram/webhook")
+    });
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : "Could not reach Telegram." });
+  }
+});
+
 app.get("/api/agent/settings", async (_req, res) => {
   try {
     const enabled = await getAutomationEnabled();
@@ -87,18 +117,18 @@ app.get("/api/agent/settings", async (_req, res) => {
       persistentStorage: isPersistentStoreConfigured()
     });
   } catch {
-    return res.status(503).json({ ok: false, error: "Could not load persistent agent settings. Check Supabase configuration and migrations." });
+    return res.status(503).json({ ok: false, error: "Could not load persistent agent settings." });
   }
 });
 app.get("/api/agent/contacts", async (_req, res) => {
   try {
-    if (!isProfileStoreConfigured()) return res.status(503).json({ ok: false, error: "Configure Supabase and apply the agent memory/contact migration first." });
+    if (!isProfileStoreConfigured()) return res.status(503).json({ ok: false, error: "Configure Supabase first." });
     return res.json({ ok: true, contacts: await listContacts() });
   } catch { return res.status(503).json({ ok: false, error: "Could not load contact permissions." }); }
 });
 app.put("/api/agent/contacts/:senderId", async (req, res) => {
   const senderId = String(req.params.senderId || "");
-  if (!/^\d{1,22}$/.test(senderId)) return res.status(400).json({ ok: false, error: "Use the numeric Telegram sender ID, not a username." });
+  if (!/^\d{1,22}$/.test(senderId)) return res.status(400).json({ ok: false, error: "Use the numeric Telegram sender ID." });
   if (typeof req.body?.enabled !== "boolean") return res.status(400).json({ ok: false, error: "enabled must be true or false." });
   try {
     await setContact({ senderId, enabled: req.body.enabled, note: safeText(req.body?.note, 200) });
@@ -184,12 +214,12 @@ app.post("/api/agent/pause", async (_req, res) => {
     automationEnabled = false;
     return res.json({ ok: true, automationEnabled: false });
   } catch {
-    return res.status(503).json({ ok: false, error: "Could not persist pause state; automation state was not changed." });
+    return res.status(503).json({ ok: false, error: "Could not persist pause state." });
   }
 });
 app.post("/api/agent/resume", async (_req, res) => {
   if (process.env.VERCEL && (!isPersistentStoreConfigured() || !isProfileStoreConfigured())) {
-    return res.status(409).json({ ok: false, error: "Vercel automation requires Supabase persistence. Configure Supabase and apply every migration before enabling replies." });
+    return res.status(409).json({ ok: false, error: "Vercel automation requires Supabase persistence." });
   }
   if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_WEBHOOK_SECRET || !isAiConfigured()) {
     return res.status(409).json({ ok: false, error: "Configure Telegram and AI credentials before enabling automation." });
@@ -197,15 +227,15 @@ app.post("/api/agent/resume", async (_req, res) => {
   let hasAllowedContacts = allowlist.size > 0;
   if (!hasAllowedContacts && isProfileStoreConfigured()) {
     try { hasAllowedContacts = (await listContacts()).some(contact => contact.enabled); }
-    catch { return res.status(503).json({ ok: false, error: "Could not verify saved contact permissions; automation remains off." }); }
+    catch { return res.status(503).json({ ok: false, error: "Could not verify contact permissions." }); }
   }
-  if (!hasAllowedContacts) return res.status(409).json({ ok: false, error: "Explicitly allow at least one contact in Settings before enabling replies." });
+  if (!hasAllowedContacts) return res.status(409).json({ ok: false, error: "Allow at least one contact in Inbox before enabling replies." });
   try {
     await setAutomationEnabled(true);
     automationEnabled = true;
     return res.json({ ok: true, automationEnabled: true });
   } catch {
-    return res.status(503).json({ ok: false, error: "Could not persist automation state; replies remain disabled." });
+    return res.status(503).json({ ok: false, error: "Could not persist automation state." });
   }
 });
 app.post("/api/agent/emergency-stop", async (_req, res) => {
@@ -214,7 +244,7 @@ app.post("/api/agent/emergency-stop", async (_req, res) => {
     automationEnabled = false;
     return res.json({ ok: true, automationEnabled: false, message: "New automatic replies are disabled." });
   } catch {
-    return res.status(503).json({ ok: false, error: "Could not persist emergency-stop state. Check storage immediately." });
+    return res.status(503).json({ ok: false, error: "Could not persist emergency-stop state." });
   }
 });
 app.post("/api/agent/simulate", rateLimit({ name: "simulate", limit: 20, windowMs: 60_000 }), async (req, res) => {
@@ -257,7 +287,6 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
     await logEvent("business_connection", connection.is_enabled ? "Business connection enabled." : "Business connection disabled.", { updateId, senderId: ownerId || undefined });
     return res.json({ ok: true, connectionReceived: true, enabled: Boolean(connection.is_enabled) });
   }
-  // Dual-mode: Telegram Business inbox OR normal private chats with the bot.
   const businessMessage = update.business_message;
   const directMessage = update.message;
   let message: any = null;
@@ -267,17 +296,12 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
     message = businessMessage;
     businessConnectionId = String(businessMessage.business_connection_id);
     mode = "business";
-  } else if (
-    directMessage &&
-    !directMessage.from?.is_bot &&
-    directMessage.chat?.type === "private" &&
-    !directMessage.via_bot
-  ) {
+  } else if (directMessage && !directMessage.from?.is_bot && directMessage.chat?.type === "private" && !directMessage.via_bot) {
     message = directMessage;
     businessConnectionId = "direct";
     mode = "direct";
   } else {
-    await logEvent("ignored", "Unsupported update ignored (need business_message or private message).", { updateId });
+    await logEvent("ignored", "Unsupported update ignored.", { updateId });
     return res.json({ ok: true, ignored: true });
   }
   const senderId = String(message.from?.id ?? "");
@@ -287,7 +311,6 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
     await logEvent("ignored", "Empty or unsupported message ignored.", { updateId, senderId, chatId });
     return res.json({ ok: true, ignored: true, reason: "Unsupported message type." });
   }
-  // Never auto-reply to the account owner's own messages (fixes "replies to my own text").
   const connectionOwnerId = mode === "business" ? businessOwnerByConnection.get(businessConnectionId) : undefined;
   const isOwnMessage =
     ownerUserIds.has(senderId) ||
@@ -312,7 +335,7 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
   let contactAllowed = allowlist.has(senderId);
   if (isProfileStoreConfigured()) {
     try { const contact = (await listContacts()).find(item => item.senderId === senderId); contactAllowed = contact ? contact.enabled : allowlist.has(senderId); }
-    catch { await releaseUpdate(updateId).catch(() => undefined); return res.status(503).json({ ok: false, error: "Contact permissions unavailable; refusing to send." }); }
+    catch { await releaseUpdate(updateId).catch(() => undefined); return res.status(503).json({ ok: false, error: "Contact permissions unavailable." }); }
   }
   if (isPersistentStoreConfigured()) {
     try {
@@ -325,14 +348,14 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
       });
     } catch (error) {
       await releaseUpdate(updateId).catch(() => undefined);
-      return res.status(503).json({ ok: false, error: "Could not persist incoming message; refusing to process it." });
+      return res.status(503).json({ ok: false, error: "Could not persist incoming message." });
     }
   }
   let enabledForThisUpdate = false;
   try { enabledForThisUpdate = await getAutomationEnabled(); }
   catch {
     await releaseUpdate(updateId).catch(() => undefined);
-    return res.status(503).json({ ok: false, error: "Could not load persisted automation state; refusing to send." });
+    return res.status(503).json({ ok: false, error: "Could not load automation state." });
   }
   const decision = decideReply({ enabled: enabledForThisUpdate, allowedContact: contactAllowed, text, duplicate: false });
   if (!decision.allowed) {
@@ -348,12 +371,21 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
       try {
         const history = await listConversationMessages(chatId);
         recentMessages = history.slice(-8).map(item => (item.direction === "incoming" ? "Contact: " : "Reply: ") + item.text.slice(0, 700));
-      } catch { /* Continue without stored history if unavailable. */ }
+      } catch { /* */ }
     }
     const contextParts = [
       recentMessages.length ? "Recent chat:\n" + recentMessages.join("\n") : "",
       memories.length ? "Saved preferences:\n" + memories.join("\n") : ""
     ].filter(Boolean);
+    try {
+      const typingPayload: Record<string, unknown> = { chat_id: chatId, action: "typing" };
+      if (mode === "business" && businessConnectionId && businessConnectionId !== "direct") {
+        typingPayload.business_connection_id = businessConnectionId;
+      }
+      await fetch("https://api.telegram.org/bot" + process.env.TELEGRAM_BOT_TOKEN + "/sendChatAction", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(typingPayload)
+      });
+    } catch { /* ignore */ }
     const reply = await generateReply({
       incomingText: text,
       tone: preferences.tone,
@@ -362,7 +394,7 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
       replyLength: preferences.replyLength
     });
     if (reply === "[ESCALATE]") {
-      await logEvent("owner_review_required", "AI marked this message for owner review; no automatic reply was sent.", { updateId, senderId, chatId });
+      await logEvent("owner_review_required", "AI marked this message for owner review.", { updateId, senderId, chatId });
       return res.json({ ok: true, escalated: true, sent: false });
     }
     const sendPayload: Record<string, unknown> = { chat_id: chatId, text: reply };
@@ -370,15 +402,13 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
       sendPayload.business_connection_id = businessConnectionId;
     }
     const apiResponse = await fetch("https://api.telegram.org/bot" + process.env.TELEGRAM_BOT_TOKEN + "/sendMessage", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(sendPayload)
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(sendPayload)
     });
     const body = await apiResponse.json() as { ok?: boolean; description?: string };
     if (!apiResponse.ok || !body.ok) {
       await logEvent("delivery_failed", body.description || "Telegram delivery failed.", { updateId, senderId, chatId });
       await releaseUpdate(updateId).catch(() => undefined);
-      return res.status(502).json({ ok: false, error: "Telegram delivery failed.", detail: body.description || "Unknown Telegram API error." });
+      return res.status(502).json({ ok: false, error: "Telegram delivery failed.", detail: body.description || "Unknown error." });
     }
     if (isPersistentStoreConfigured()) {
       try {
@@ -387,7 +417,7 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
           senderName: [message.from?.first_name, message.from?.last_name].filter(Boolean).join(" ") || String(message.from?.username || senderId),
           username: String(message.from?.username || ""), direction: "outgoing", text: reply
         });
-      } catch { await logEvent("inbox_write_failed", "Reply was sent, but its inbox copy could not be saved.", { updateId, senderId, chatId }); }
+      } catch { await logEvent("inbox_write_failed", "Reply was sent, but inbox copy could not be saved.", { updateId, senderId, chatId }); }
     }
     await logEvent("reply_sent", "Automatic reply delivered.", { updateId, senderId, chatId });
     return res.json({ ok: true, sent: true, mode });

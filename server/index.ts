@@ -111,7 +111,9 @@ app.post("/api/inbox/:chatId/reply", requireDashboardAuth, async (req, res) => {
     });
     const body = await apiResponse.json() as { ok?: boolean; description?: string; result?: { message_id?: number; date?: number } };
     if (!apiResponse.ok || !body.ok) return res.status(502).json({ ok: false, error: body.description || "Telegram delivery failed." });
-    await recordMessage({ businessConnectionId: conversation.businessConnectionId, chatId, senderId: conversation.senderId, senderName: conversation.senderName, username: conversation.username, direction: "outgoing", text, telegramMessageId: body.result?.message_id, createdAt: body.result?.date ? new Date(body.result.date * 1000).toISOString() : undefined });
+    try {
+      await recordMessage({ businessConnectionId: conversation.businessConnectionId, chatId, senderId: conversation.senderId, senderName: conversation.senderName, username: conversation.username, direction: "outgoing", text, telegramMessageId: body.result?.message_id, createdAt: body.result?.date ? new Date(body.result.date * 1000).toISOString() : undefined });
+    } catch { await logEvent("inbox_write_failed", "Manual reply was sent, but its inbox copy could not be saved.", { chatId, senderId: conversation.senderId }); }
     await logEvent("manual_reply_sent", "Owner sent a manual Telegram reply.", { chatId, senderId: conversation.senderId });
     return res.json({ ok: true, sent: true });
   } catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Could not send reply." }); }
@@ -225,11 +227,13 @@ app.post("/api/telegram/webhook", async (req, res) => {
       return res.status(502).json({ ok: false, error: "Telegram delivery failed.", detail: body.description || "Unknown Telegram API error." });
     }
     if (isPersistentStoreConfigured()) {
-      await recordMessage({
-        updateId, businessConnectionId: String(message.business_connection_id), chatId, senderId,
-        senderName: [message.from?.first_name, message.from?.last_name].filter(Boolean).join(" ") || String(message.from?.username || senderId),
-        username: String(message.from?.username || ""), direction: "outgoing", text: reply
-      });
+      try {
+        await recordMessage({
+          updateId, businessConnectionId: String(message.business_connection_id), chatId, senderId,
+          senderName: [message.from?.first_name, message.from?.last_name].filter(Boolean).join(" ") || String(message.from?.username || senderId),
+          username: String(message.from?.username || ""), direction: "outgoing", text: reply
+        });
+      } catch { await logEvent("inbox_write_failed", "Reply was sent, but its inbox copy could not be saved.", { updateId, senderId, chatId }); }
     }
     await logEvent("reply_sent", "Automatic reply delivered.", { updateId, senderId, chatId });
     return res.json({ ok: true, sent: true });

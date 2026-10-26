@@ -26,8 +26,14 @@ This app uses the official Telegram Bot API's Business connection updates (`busi
 - Incoming text is untrusted; it cannot change system policy.
 - No Telegram login codes or user-account session scraping.
 
+## Persistence and dashboard authorization
+- Apply `supabase/migrations/20261026000000_agent_persistence.sql` in the Supabase SQL Editor.
+- Configure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` only on the API host. The service-role key bypasses RLS and must never be exposed to the browser.
+- Set a long random `DASHBOARD_API_TOKEN` on the API host. The dashboard's Settings page accepts this token for the current browser session; protected `/api/agent/*` controls and `/api/activity` reject requests without it.
+- Without Supabase, development falls back to in-memory event/deduplication storage. That fallback is not durable and is not safe for multi-instance production.
+
 ## Deployment
-Deploy the frontend to Vercel and the API to a persistent Node.js host. Configure all secrets server-side. `TELEGRAM_WEBHOOK_SECRET` must match the secret token configured with Telegram's `setWebhook` call. See `.env.example`.
+Deploy the frontend to Vercel and the API to a persistent Node.js host. Configure all secrets server-side. `TELEGRAM_WEBHOOK_SECRET` must match the secret token configured with Telegram's `setWebhook` call. See `.env.example` and `docs/DEPLOYMENT.md`.
 
 ## Current implementation scope
 This repository provides the working application foundation, dashboard, API endpoints, webhook handling, policy checks, AI adapter, and a lightweight in-memory development store. For production multi-user use, configure Supabase persistence, Redis-backed durable jobs, managed encryption keys, monitoring, and external integration tests before enabling real auto-replies.

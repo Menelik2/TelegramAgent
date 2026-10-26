@@ -69,13 +69,24 @@ export default function App() {
     if (!dashboardToken) { flash("Enter your dashboard API token in Settings first."); return; }
     setInboxLoading(true);
     try {
-      const [inboxResponse, contactsResponse] = await Promise.all([
+      const [inboxResponse, contactsResponse, activityResponse] = await Promise.all([
         apiRequest("/api/inbox"),
-        apiRequest("/api/agent/contacts")
+        apiRequest("/api/agent/contacts"),
+        apiRequest("/api/activity?limit=100")
       ]);
       const inboxData = await inboxResponse.json();
       if (!inboxResponse.ok) throw new Error(inboxData.error || "Live inbox could not be loaded.");
       const contactData = contactsResponse.ok ? await contactsResponse.json() : { contacts: [] };
+      if (activityResponse.ok) {
+        const activityData = await activityResponse.json();
+        const events = (activityData.events || []) as Array<{id?:number;kind:string;detail:string;createdAt?:string}>;
+        setActivityEvents(events);
+        setLiveMetrics({
+          messages: (inboxData.conversations || []).reduce((total: number, item: {messageCount?:number}) => total + Number(item.messageCount || 0), 0),
+          replies: events.filter(event => event.kind === "reply_sent" || event.kind === "manual_reply_sent").length,
+          review: events.filter(event => event.kind === "owner_review_required" || event.kind === "blocked" || event.kind === "delivery_failed").length
+        });
+      }
       const permissions = new Map<string, boolean>((contactData.contacts || []).map((x: {senderId:string;enabled:boolean}) => [x.senderId, x.enabled]));
       const colors = ["lilac", "blue", "mint", "peach"];
       const mapped: Contact[] = (inboxData.conversations || []).map((item: {chatId:string;senderId?:string;senderName:string;username:string;lastMessage:string;lastMessageAt:string;lastDirection:string}, i:number) => ({

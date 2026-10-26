@@ -1,4 +1,4 @@
-const DEFAULT_MODEL = "gemini-3.8-flash";
+const DEFAULT_MODEL = "gemini-2.5-flash";
 
 type GeminiResponse = {
   candidates?: Array<{
@@ -65,8 +65,8 @@ export async function generateReply(input: {
         systemInstruction: { parts: [{ text: systemInstruction }] },
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         generationConfig: {
-          temperature: 0.78,
-          maxOutputTokens: /long|detailed|natural conversation/i.test(input.replyLength || "") ? 420 : 220
+          temperature: 0.55,
+          maxOutputTokens: /long|detailed|natural conversation/i.test(input.replyLength || "") ? 300 : 120
         }
       })
     }

@@ -1,8 +1,8 @@
 export type ReplyDecision = { allowed: boolean; reason: string };
 const promptInjectionPatterns = [
-  /\\b(ignore|disregard|forget) (all )?(previous|prior|above|earlier) instructions\\b/i,
-  /\\b(reveal|print|repeat|show|disclose) (the )?(hidden |system |developer )?(prompt|instructions|secrets|api key|private data)\\b/i,
-  /\\b(override|disable|bypass) (all )?(safety|security|system) (rules|instructions|filters)\\b/i,
+  /\b(ignore|disregard|forget) (all )?(previous|prior|above|earlier) instructions\b/i,
+  /\b(reveal|print|repeat|show|disclose) (the )?(hidden |system |developer )?(prompt|instructions|secrets|api key|private data)\b/i,
+  /\b(override|disable|bypass) (all )?(safety|security|system) (rules|instructions|filters)\b/i,
   /የቀድሞ መመሪያዎችን ተወ|ስርዓት መመሪያውን አሳይ|ሚስጥር.*(አሳይ|ንገር)/
 ];
 const sensitivePatterns = [
@@ -16,7 +16,8 @@ export function decideReply(input: { enabled: boolean; allowedContact: boolean; 
   if (!input.enabled) return { allowed: false, reason: "Automation is disabled." };
   if (!input.allowedContact) return { allowed: false, reason: "Contact is not on the explicit allowlist." };
   if (input.duplicate) return { allowed: false, reason: "Duplicate message event." };
-  if (promptInjectionPatterns.some(pattern => pattern.test(input.text))) return { allowed: false, reason: "Potential prompt injection requires owner review." };\n  if (sensitivePatterns.some(pattern => pattern.test(input.text))) return { allowed: false, reason: "Sensitive content requires owner review." };
+  if (promptInjectionPatterns.some(pattern => pattern.test(input.text))) return { allowed: false, reason: "Potential prompt injection requires owner review." };
+  if (sensitivePatterns.some(pattern => pattern.test(input.text))) return { allowed: false, reason: "Sensitive content requires owner review." };
   return { allowed: true, reason: "Contact and content passed basic policy checks." };
 }
 export function safeText(value: unknown, maxLength = 1800): string {

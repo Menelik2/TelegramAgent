@@ -19,6 +19,13 @@ function constantTimeEqual(a: string, b: string): boolean {
   const aa = Buffer.from(a); const bb = Buffer.from(b);
   return aa.length === bb.length && timingSafeEqual(aa, bb);
 }
+function requireDashboardAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const expected = process.env.DASHBOARD_API_TOKEN || "";
+  const provided = req.header("x-dashboard-token") || "";
+  if (!expected) return res.status(503).json({ ok: false, error: "Dashboard API is locked until DASHBOARD_API_TOKEN is configured." });
+  if (!provided || !constantTimeEqual(provided, expected)) return res.status(401).json({ ok: false, error: "Dashboard authorization failed." });
+  next();
+}
 async function logEvent(kind: string, detail: string, values: { updateId?: string; senderId?: string; chatId?: string } = {}) {
   try { await recordEvent({ kind, detail, ...values }); }
   catch (error) { console.error("activity_write_failed", error instanceof Error ? error.message : "unknown"); }
@@ -29,11 +36,12 @@ app.get("/api/status", (_req, res) => res.json({
   ok: true, automationEnabled, telegramConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_WEBHOOK_SECRET),
   aiConfigured: isAiConfigured(), storageConfigured: isPersistentStoreConfigured(), mode: "explicit-allowlist", lastWebhookAt
 }));
+app.use("/api/agent", requireDashboardAuth);
 app.get("/api/agent/settings", (_req, res) => res.json({
   automationEnabled, mode: "explicit-allowlist", allowedContactCount: allowlist.size,
   persistentStorage: isPersistentStoreConfigured()
 }));
-app.get("/api/activity", async (req, res) => {
+app.get("/api/activity", requireDashboardAuth, async (req, res) => {
   try {
     const limit = Number(req.query.limit || 30);
     return res.json({ ok: true, persistent: isPersistentStoreConfigured(), events: await listEvents(limit) });

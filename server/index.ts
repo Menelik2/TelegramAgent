@@ -15,6 +15,10 @@ app.use(cors({ origin: (process.env.FRONTEND_URL || "http://localhost:5173").spl
 app.use(express.json({ limit: "256kb" }));
 const port = Number(process.env.PORT || 8787);
 const allowlist = new Set((process.env.TELEGRAM_ALLOWED_USER_IDS || "").split(",").map(s => s.trim()).filter(Boolean));
+/** Owner Telegram user IDs — never auto-reply to these (your own texts). */
+const ownerUserIds = new Set((process.env.TELEGRAM_OWNER_USER_IDS || "").split(",").map(s => s.trim()).filter(Boolean));
+/** business_connection_id -> owner user id, learned from Telegram business_connection updates */
+const businessOwnerByConnection = new Map<string, string>();
 let automationEnabled = false;
 let lastWebhookAt: string | null = null;
 
@@ -244,7 +248,13 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
   lastWebhookAt = new Date().toISOString();
   const connection = update.business_connection;
   if (connection) {
-    await logEvent("business_connection", connection.is_enabled ? "Business connection enabled." : "Business connection disabled.", { updateId });
+    const connId = String(connection.id || "");
+    const ownerId = String(connection.user?.id || connection.user_id || "");
+    if (connId && ownerId) {
+      businessOwnerByConnection.set(connId, ownerId);
+      ownerUserIds.add(ownerId);
+    }
+    await logEvent("business_connection", connection.is_enabled ? "Business connection enabled." : "Business connection disabled.", { updateId, senderId: ownerId || undefined });
     return res.json({ ok: true, connectionReceived: true, enabled: Boolean(connection.is_enabled) });
   }
   // Dual-mode: Telegram Business inbox OR normal private chats with the bot.
@@ -276,6 +286,28 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
   if (!text || !senderId || !chatId) {
     await logEvent("ignored", "Empty or unsupported message ignored.", { updateId, senderId, chatId });
     return res.json({ ok: true, ignored: true, reason: "Unsupported message type." });
+  }
+  // Never auto-reply to the account owner's own messages (fixes "replies to my own text").
+  const connectionOwnerId = mode === "business" ? businessOwnerByConnection.get(businessConnectionId) : undefined;
+  const isOwnMessage =
+    ownerUserIds.has(senderId) ||
+    (connectionOwnerId !== undefined && connectionOwnerId === senderId) ||
+    Boolean(message.outgoing) ||
+    Boolean(message.sender_business_bot);
+  if (isOwnMessage) {
+    if (isPersistentStoreConfigured()) {
+      try {
+        await recordMessage({
+          updateId, telegramMessageId: Number(message.message_id) || undefined,
+          businessConnectionId, chatId, senderId,
+          senderName: [message.from?.first_name, message.from?.last_name].filter(Boolean).join(" ") || String(message.from?.username || senderId),
+          username: String(message.from?.username || ""), direction: "outgoing", text,
+          createdAt: message.date ? new Date(Number(message.date) * 1000).toISOString() : undefined
+        });
+      } catch { /* best-effort */ }
+    }
+    await logEvent("ignored", "Own message ignored — no auto-reply to the owner's text.", { updateId, senderId, chatId });
+    return res.json({ ok: true, ignored: true, reason: "Own message" });
   }
   let contactAllowed = allowlist.has(senderId);
   if (isProfileStoreConfigured()) {

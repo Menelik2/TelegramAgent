@@ -42,5 +42,24 @@ This app uses the official Telegram Bot API's Business connection updates (`busi
 ## Deployment
 Deploy the frontend to Vercel and the API to a persistent Node.js host. Configure all secrets server-side. `TELEGRAM_WEBHOOK_SECRET` must match the secret token configured with Telegram's `setWebhook` call. See `.env.example` and `docs/DEPLOYMENT.md`.
 
+## API abuse protection
+
+- The API applies per-IP, in-memory rate limits to AI simulation (20 requests/minute), manual Telegram replies (30/minute), and Telegram webhook requests (120/minute). Rejected requests receive HTTP 429 and a `Retry-After` header.
+- The rate limiter is a lightweight single-process safeguard, not a distributed limiter. For multi-instance or high-traffic production deployments, replace it with a shared store (for example Redis) and enforce limits at the hosting platform or gateway too.
+- Do not enable Express proxy trust blindly. If deployed behind a reverse proxy, configure trusted proxy hops explicitly for your hosting environment so client IP rate limits cannot be spoofed.
+- The API disables Express's `X-Powered-By` header and limits JSON request bodies. These controls reduce exposure but are not a substitute for an external WAF, monitoring, and incident response.
+
 ## Live inbox and remaining limitations
 With the three Supabase migrations applied, the dashboard can load real Telegram Business conversations, display stored incoming/outgoing text, update explicit contact permissions, and send owner-authored manual replies through the connected business connection. Without a valid dashboard token, the inbox remains in clearly labeled preview mode. AI memory is owner-entered only; the app does not silently learn from private conversations. This is still a single-owner project using a shared dashboard token, not a multi-user product. Before broad production use, add formal user authentication, rate limiting, retention/deletion controls, operational monitoring, and a verified end-to-end Telegram test. Automatic replies remain off after backend restarts and must be explicitly re-enabled.
+
+## Production hardening checklist
+
+The following are still deployment/product limitations and require environment-specific setup or additional implementation before broad public use:
+
+- **Authentication:** the dashboard currently uses a single shared `DASHBOARD_API_TOKEN`, not individual user accounts, MFA, or per-user permissions. Use a proper identity provider before multi-user use.
+- **Rate limiting:** current API limits are in-memory and reset on restart; use a shared limiter for multiple server instances.
+- **Retention and deletion:** define a data-retention policy and implement owner-facing export/deletion workflows for stored messages, activity events, contacts, and memories. Apply corresponding Supabase retention controls.
+- **Monitoring:** configure hosting logs, alerts for repeated 401/429/5xx responses, provider failures, and Telegram delivery failures. Never log secrets or full sensitive message contents.
+- **AI security:** regex-based checks catch only known patterns. They cannot reliably detect every paraphrased or indirect prompt injection. Keep automation off for unknown contacts, review high-risk conversations, and test adversarial examples against the configured model.
+- **End-to-end validation:** run CI and perform a controlled Telegram Business test with a dedicated test contact before production. Unit tests do not prove delivery, webhook configuration, Supabase migrations, or provider availability.
+- **Operational safety:** use a separate test bot/business connection, keep secrets only in the API host, rotate credentials if exposed, and verify backups and incident recovery procedures.

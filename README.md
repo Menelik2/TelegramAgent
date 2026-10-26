@@ -70,7 +70,7 @@ In Vercel, open **Project → Settings → Environment Variables**. Add the foll
 | `GEMINI_API_KEY` | Yes | Gemini API key; server-side only. Create one at https://aistudio.google.com/apikey. |
 | `SUPABASE_URL` | Yes | The URL of your Supabase project. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Yes | The Supabase service-role key from your project's API settings. **Server-side secret only—never add it to a `VITE_*` variable or frontend code.** |
-| `GEMINI_MODEL` | No | Optional Gemini model name; defaults to `gemini-3.5-flash`. |
+| `GEMINI_MODEL` | No | Optional Gemini model name; defaults to `gemini-3.8-flash`. |
 | `TELEGRAM_ALLOWED_USER_IDS` | No | Optional comma-separated Telegram user IDs allowed to use owner-level features, if configured by the app. |
 | `FRONTEND_URL` | No | Optional public Vercel deployment URL if needed by your configuration. |
 | `VITE_API_BASE_URL` | No | Leave blank for this single-project deployment; the dashboard calls the same-origin `/api`. |

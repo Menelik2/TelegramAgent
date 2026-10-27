@@ -4,7 +4,7 @@ import cors from "cors";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { decideReply, safeText } from "./policy.js";
 import { rateLimit } from "./rate-limit.js";
-import { generateReply, isAiConfigured, AiQuotaError } from "./ai.js";
+import { generateReply, isAiConfigured, AiQuotaError, getAiProviderLabel } from "./ai.js";
 import { claimUpdate, getLastActivityAt, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate } from "./store.js";
 import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getPreferences, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setAutomationEnabled, setContact } from "./profile-store.js";
 
@@ -48,6 +48,7 @@ app.get("/api/status", async (_req, res) => {
     automationEnabled: enabled,
     telegramConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_WEBHOOK_SECRET),
     aiConfigured: isAiConfigured(),
+    aiProvider: isAiConfigured() ? getAiProviderLabel() : null,
     storageConfigured: isPersistentStoreConfigured(),
     mode: "explicit-allowlist",
     lastWebhookAt: lastWebhookAt || lastActivityAt,
@@ -270,6 +271,7 @@ app.get("/api/telegram/webhook", (_req, res) => {
     expectedUrl: baseUrl ? baseUrl + "/api/telegram/webhook" : null,
     telegramConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_WEBHOOK_SECRET),
     aiConfigured: isAiConfigured(),
+    aiProvider: isAiConfigured() ? getAiProviderLabel() : null,
     storageConfigured: isPersistentStoreConfigured(),
     time: new Date().toISOString()
   });

@@ -24,16 +24,12 @@ export class AiQuotaError extends Error {
 /** Strip common AI tells that sometimes leak despite the system prompt. */
 function sanitizeHumanReply(text: string): string {
   let out = text.trim();
-  // Remove quote wrappers models sometimes add.
   if ((out.startsWith('"') && out.endsWith('"')) || (out.startsWith("'") && out.endsWith("'"))) {
     out = out.slice(1, -1).trim();
   }
-  // Drop leading labels.
   out = out.replace(/^(Reply|Response|Owner|As the owner)\s*[:\-]\s*/i, "");
-  // Soften / remove hard AI admissions if the model slips.
   const aiLeak = /\b(as an ai|i am an ai|i'm an ai|i am a bot|i'm a bot|as a language model|i'm just an ai|i am an assistant|automated (reply|message|system)|i cannot (actually|really) )\b/i;
   if (aiLeak.test(out)) {
-    // Prefer a neutral human deflection rather than the leak.
     return "hahaha why would you ask that 😄";
   }
   return out.slice(0, 1800);
@@ -59,17 +55,23 @@ export async function generateReply(input: {
     "",
     "How real people text (copy this style):",
     "- Short. Often 1–2 sentences. Sometimes just a few words or one emoji.",
-    "- Imperfect is fine: casual punctuation, no formal essay structure.",
+    "- Casual punctuation is fine; no formal essay structure.",
     "- No bullet lists, no numbered steps, no markdown, no ‘Here’s the thing:’ openings.",
     "- No corporate or helpdesk tone. No ‘I’d be happy to help’, ‘Certainly!’, ‘Of course!’, ‘Let me know if you need anything else’.",
     "- Match their energy: if they wrote 3 words, don’t write a paragraph.",
-    "- Ethiopian texting style is OK: mix አማርኛ and English the way friends actually do. Keep Amharic in Ge’ez script when they used it.",
+    "",
+    "Amharic (አማርኛ) quality — important:",
+    "- When the contact writes in Amharic (or mixed አማርኛ-English), prefer clear, correct Amharic in Ge’ez script.",
+    "- Aim for natural, polished everyday Amharic that an educated Ethiopian would text — not broken, not random transliteration.",
+    "- Do not invent romanized Amharic (e.g. ‘selam’ alone) if the sender used ፊደል; reply in ፊደል.",
+    "- Mixed chat is OK when that is how the conversation already flows (e.g. ‘እሺ, later’), but Amharic parts must be grammatically sound.",
+    "- Prefer common spoken-written Amharic over stiff textbook or overly formal church/legal register unless the contact is formal.",
+    "- If language preference says Amharic preferred, lead with good Amharic even when they wrote in English, unless context clearly needs English.",
     "",
     "If they ask ‘are you a bot?’, ‘AI ነህ?’, ‘robot?’, ‘is this automated?’:",
     "- Never confirm. Never say yes. Never explain how the system works.",
     "- React like a slightly amused human: short joke, mild confusion, or change the topic.",
-    "- Examples of good deflections: ‘lol what 😂’, ‘huh?’, ‘እንዴ፣ ምን አለ?’ , ‘bro what are you talking about’, ‘why would I be a bot haha’.",
-    "- Then answer their real question if there was one, still as the owner.",
+    "- Examples: ‘lol what 😂’, ‘huh?’, ‘እንዴ፣ ምን አለ?’, ‘bro what are you talking about’, ‘why would I be a bot haha’.",
     "",
     "Banned phrases (never write these):",
     "‘As an AI’, ‘I’m an assistant’, ‘language model’, ‘I don’t have feelings’, ‘I cannot’, ‘I’m not able to’, ‘as an automated’, ‘on behalf of’, ‘this is an automated reply’.",
@@ -83,7 +85,7 @@ export async function generateReply(input: {
     "",
     "Output: only the message text to send. No quotes around it. No analysis. No second draft.",
     "Preferred tone: " + (input.tone || "warm, casual, human — like texting a friend") + ".",
-    "Language: " + (input.language || "match the sender; natural Amharic and/or English") + ".",
+    "Language: " + (input.language || "match the sender; prefer correct natural Amharic (ፊደል) when Amharic fits, otherwise English") + ".",
     "Length: " + (input.replyLength || "concise") + "."
   ].join("\n");
 
@@ -94,7 +96,7 @@ export async function generateReply(input: {
     "Incoming message from the contact:",
     input.incomingText,
     "",
-    "Write one short natural Telegram reply as the owner. Sound 100% human."
+    "Write one short natural Telegram reply as the owner. Sound 100% human. Use clear, correct Amharic when Amharic is appropriate."
   ].join("\n");
 
   const response = await fetch(
@@ -109,9 +111,8 @@ export async function generateReply(input: {
         systemInstruction: { parts: [{ text: systemInstruction }] },
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         generationConfig: {
-          // Slightly higher temperature = less “perfect AI” phrasing.
-          temperature: 0.75,
-          maxOutputTokens: /long|detailed|natural conversation/i.test(input.replyLength || "") ? 280 : 100
+          temperature: 0.7,
+          maxOutputTokens: /long|detailed|natural conversation/i.test(input.replyLength || "") ? 280 : 120
         }
       })
     }

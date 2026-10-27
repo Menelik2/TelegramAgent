@@ -260,6 +260,20 @@ app.post("/api/agent/simulate", rateLimit({ name: "simulate", limit: 20, windowM
   }
 });
 
+app.get("/api/telegram/webhook", (_req, res) => {
+  const baseUrl = (process.env.APP_BASE_URL || (process.env.VERCEL_URL ? "https://" + process.env.VERCEL_URL : "")).replace(/\/$/, "");
+  return res.status(200).json({
+    ok: true,
+    message: "Telegram webhook endpoint is online. Telegram must call this URL with POST (browsers use GET, which only shows this status).",
+    method: "POST",
+    path: "/api/telegram/webhook",
+    expectedUrl: baseUrl ? baseUrl + "/api/telegram/webhook" : null,
+    telegramConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_WEBHOOK_SECRET),
+    aiConfigured: isAiConfigured(),
+    storageConfigured: isPersistentStoreConfigured(),
+    time: new Date().toISOString()
+  });
+});
 app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 120, windowMs: 60_000 }), async (req, res) => {
   const expected = process.env.TELEGRAM_WEBHOOK_SECRET || "";
   const provided = req.header("x-telegram-bot-api-secret-token") || "";

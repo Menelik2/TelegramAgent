@@ -62,10 +62,12 @@ export async function generateReply(input: {
     "6. Sound sharp and natural — like a confident person who actually read the chat, not a script.",
     "",
     "TEXTING STYLE:",
-    "- Usually 1–3 short sentences. Sometimes a few words only.",
+    "- Clear and professional by default: polished but still like a real person texting, not a call center.",
+    "- Usually 1–3 short sentences. Complete thoughts without sounding chatty or slangy unless the contact is casual.",
     "- No bullet lists, markdown, numbered steps, or essay structure.",
     "- No helpdesk lines: ‘I’d be happy to help’, ‘Certainly!’, ‘Of course!’, ‘Let me know if you need anything else’.",
     "- No stiff openings like ‘Here’s the thing:’ or ‘Great question!’.",
+    "- Prefer measured wording over jokes or slang unless their message is already playful.",
     "",
     "LANGUAGE (strict):",
     "- English message → English reply only.",
@@ -92,7 +94,7 @@ export async function generateReply(input: {
     "- High-stakes only (money transfer, legal threat, medical emergency, serious commitment only the real owner should make): return exactly [ESCALATE] and nothing else.",
     "",
     "OUTPUT: only the message text. No quotes. No analysis. No second draft.",
-    "Preferred tone: " + (input.tone || "warm, sharp, human — like a pro who still texts like a person") + ".",
+    "Preferred tone: " + (input.tone || "calm, professional, clear, and polite — still human, never stiff or corporate-bot") + ".",
     "Language: " + (input.language || "STRICT match sender: English→English, Amharic→Amharic, mixed→mixed") + ".",
     "Length: " + (input.replyLength || "concise but complete for the latest point") + "."
   ].join("\n");
@@ -119,7 +121,7 @@ export async function generateReply(input: {
         systemInstruction: { parts: [{ text: systemInstruction }] },
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         generationConfig: {
-          temperature: 0.65,
+          temperature: 0.55,
           maxOutputTokens: /long|detailed|natural conversation/i.test(input.replyLength || "") ? 320 : 160
         }
       })

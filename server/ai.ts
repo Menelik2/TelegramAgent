@@ -1,3 +1,5 @@
+import { getAiRuntimeSettings } from "./store.js";
+
 /**
  * AI providers for Telegram auto-replies.
  * Goal: replies should feel like a real person (MiniMe-style) — clear, warm, useful.
@@ -259,7 +261,7 @@ export async function generateReply(input: {
     if (settings.fallbackEnabled !== true) throw error;
     const fallbackModel = provider === "gemini"
       ? (model === "gemini-2.5-flash" ? "gemini-2.5-flash-lite" : "gemini-2.5-flash")
-      : "gpt-4o-mini";
+      : (model === "gpt-4o-mini" ? "gpt-4o" : "gpt-4o-mini");
     if (fallbackModel === model) throw error;
     try {
       if (provider === "openai") {

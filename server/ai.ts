@@ -7,7 +7,7 @@ import { getAiRuntimeSettings } from "./store.js";
  *   AI_PROVIDER=openai   + OPENAI_API_KEY  (+ OPENAI_MODEL=gpt-4o recommended)
  *   AI_PROVIDER=gemini   + GEMINI_API_KEY  (+ GEMINI_MODEL=gemini-2.0-flash or flash-lite)
  */
-const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
+const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
 const DEFAULT_OPENAI_MODEL = "gpt-4o";
 
 type GeminiResponse = {
@@ -186,7 +186,7 @@ async function generateWithGemini(input: {
 }, selectedModel?: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
-  // Prefer a stronger free-capable Flash model when unset; flash-lite is ok for quota but weaker quality.
+  // Use the selected stable Gemini model, defaulting to cost-efficient Gemini 3.5 Flash-Lite.
   const model = selectedModel || process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
 
   const response = await fetch(

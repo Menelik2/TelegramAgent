@@ -314,12 +314,10 @@ app.post("/api/agent/resume", async (_req, res) => {
   if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_WEBHOOK_SECRET || !isAiConfigured()) {
     return res.status(409).json({ ok: false, error: "Configure Telegram and AI credentials before enabling automation." });
   }
-  let hasAllowedContacts = allowlist.size > 0;
-  if (!hasAllowedContacts && isProfileStoreConfigured()) {
-    try { hasAllowedContacts = (await listContacts()).some(contact => contact.enabled); }
-    catch { return res.status(503).json({ ok: false, error: "Could not verify contact permissions." }); }
-  }
-  if (!hasAllowedContacts) return res.status(409).json({ ok: false, error: "Allow at least one contact in Inbox before enabling replies." });
+  // Incoming private bot chats and messages delivered through an authorized
+  // Telegram Business connection are inbound conversations. Unknown contacts
+  // may be answered; a contact explicitly disabled in the dashboard remains blocked.
+  // This avoids requiring the owner to pre-register every new person before replies work.
   try {
     await setAutomationEnabled(true);
     automationEnabled = true;
@@ -447,10 +445,17 @@ app.post("/api/telegram/webhook", async (req, res) => {
     await logEvent("ignored", "Own message ignored — no auto-reply to the owner's text.", { updateId, senderId, chatId });
     return res.json({ ok: true, ignored: true, reason: "Own message" });
   }
-  let contactAllowed = allowlist.has(senderId);
+  // Auto-reply to new inbound contacts by default for both supported modes.
+  // An explicit disabled contact entry always overrides this default.
+  let contactAllowed = allowlist.has(senderId) || !allowlist.size;
   if (isProfileStoreConfigured()) {
-    try { const contact = (await listContacts()).find(item => item.senderId === senderId); contactAllowed = contact ? contact.enabled : allowlist.has(senderId); }
-    catch { await releaseUpdate(updateId).catch(() => undefined); return res.status(503).json({ ok: false, error: "Contact permissions unavailable." }); }
+    try {
+      const contact = (await listContacts()).find(item => item.senderId === senderId);
+      contactAllowed = contact ? contact.enabled : !allowlist.has(senderId);
+    } catch {
+      await releaseUpdate(updateId).catch(() => undefined);
+      return res.status(503).json({ ok: false, error: "Contact permissions unavailable." });
+    }
   }
   if (isPersistentStoreConfigured()) {
     try {

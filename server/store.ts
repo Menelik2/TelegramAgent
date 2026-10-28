@@ -241,8 +241,8 @@ export type AiRuntimeSettings = {
 
 const DEFAULT_AI_SETTINGS: AiRuntimeSettings = {
   provider: "gemini",
-  model: "gemini-2.5-flash-lite",
-  fallbackEnabled: true
+  model: "gemini-3.8-flash",
+  fallbackEnabled: false
 };
 
 /** Read shared AI configuration from Supabase; never stores provider API keys. */

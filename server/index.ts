@@ -49,7 +49,7 @@ app.get("/api/status", async (_req, res) => {
     automationEnabled: enabled,
     telegramConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_WEBHOOK_SECRET),
     aiConfigured: isAiConfigured(),
-    aiProvider: isAiConfigured() ? getAiProviderLabel() : null,
+    aiProvider: isAiConfigured() ? (await getAiRuntimeSettings().then(v => v.model).catch(() => getAiProviderLabel())) : null,
     storageConfigured: isPersistentStoreConfigured(),
     features: featureStatusSummary(),
     mode: "explicit-allowlist",

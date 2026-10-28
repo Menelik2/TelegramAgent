@@ -206,7 +206,7 @@ export default function App() {
   const [webhookInfo, setWebhookInfo] = useState<{ expectedUrl?: string | null; matchesExpected?: boolean; webhook?: { url?: string; pending_update_count?: number; last_error_message?: string } } | null>(null);
   const [dashboardToken, setDashboardToken] = useState(() => window.sessionStorage.getItem("dashboardApiToken") || "");
   const [aiProvider, setAiProvider] = useState<"gemini" | "openai">("gemini");
-  const [aiModel, setAiModel] = useState("gemini-2.5-flash-lite");
+  const [aiModel, setAiModel] = useState("gemini-3.5-flash-lite");
   const [aiFallback, setAiFallback] = useState(true);
   const [aiSettingsLoading, setAiSettingsLoading] = useState(false);
   const [aiSettingsSaving, setAiSettingsSaving] = useState(false);
@@ -237,8 +237,8 @@ export default function App() {
       if (!r.ok) throw new Error(d.error || "Could not load AI settings.");
       if (!active) return;
       const s = d.settings || {};
-      setAiProvider("gemini");
-      setAiModel("gemini-3.8-flash");
+      setAiProvider(s.provider === "openai" ? "openai" : "gemini");
+      setAiModel(typeof s.model === "string" ? s.model : "gemini-3.5-flash-lite");
       setAiFallback(false);
       setAiProviders(d.providers || []);
     }).catch(e => { if (active) flash(e instanceof Error ? e.message : "Could not load AI settings."); })
@@ -359,26 +359,26 @@ export default function App() {
                   const next = "gemini" as const;
                   setAiProvider(next);
                   const available = aiProviders.find(p => p.id === next)?.models || [];
-                  setAiModel("gemini-3.8-flash");
+                  setAiModel(available[0] || "gemini-3.5-flash-lite");
                 }}>
                   {aiProviders.filter(p => p.id === "gemini").map(p => <option key={p.id} value={p.id}>{p.label}{p.configured ? "" : " — API key not configured"}</option>)}
                 </select>
                 <label className="field-label" style={{marginTop:14}}>Model</label>
                 <select className="form-control" value={aiModel} disabled={aiSettingsLoading || aiSettingsSaving} onChange={e => setAiModel(e.target.value)}>
-                  {["gemini-3.8-flash"].map(m => <option key={m} value={m}>{m}</option>)}
+                  {(aiProviders.find(p => p.id === "gemini")?.models || ["gemini-3.8-flash", "gemini-3.5-flash-lite"]).map(m => <option key={m} value={m}>{m === "gemini-3.5-flash-lite" ? "Gemini 3.5 Flash-Lite (fast & cost-efficient)" : "Gemini 3.8 Flash"}</option>)}
                 </select>
-                <p className="helper-text" style={{marginTop:14}}>Pinned model: Gemini 3.8 Flash. Automatic model fallback is disabled so replies never silently switch models.</p>
+                <p className="helper-text" style={{marginTop:14}}>Choose Gemini 3.8 Flash or Gemini 3.5 Flash-Lite. Automatic model fallback is disabled so replies never silently switch models.</p>
                 <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:18}}>
                   <button className="primary-button" disabled={aiSettingsLoading || aiSettingsSaving} onClick={() => {
                     setAiSettingsSaving(true);
-                    apiRequest("/api/agent/ai-settings", {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:"gemini",model:"gemini-3.8-flash",fallbackEnabled:false})})
+                    apiRequest("/api/agent/ai-settings", {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:aiProvider,model:aiModel,fallbackEnabled:false})})
                       .then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Save failed."); flash("AI model settings saved. New replies will use " + aiModel + "."); })
                       .catch(e => flash(e instanceof Error ? e.message : "Could not save AI settings."))
                       .finally(() => setAiSettingsSaving(false));
                   }}>{aiSettingsSaving ? "Saving…" : "Save model settings"}</button>
                   <button className="secondary-button" disabled={aiSettingsLoading || aiSettingsSaving || aiTesting} onClick={() => {
                     setAiTesting(true);
-                    apiRequest("/api/agent/ai-settings/test", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:"gemini",model:"gemini-3.8-flash"})})
+                    apiRequest("/api/agent/ai-settings/test", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:aiProvider,model:aiModel})})
                       .then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Connection test failed."); flash("Connection successful: " + d.model); })
                       .catch(e => flash(e instanceof Error ? e.message : "Connection test failed."))
                       .finally(() => setAiTesting(false));

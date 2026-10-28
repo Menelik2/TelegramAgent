@@ -214,7 +214,7 @@ async function generateWithGemini(input: {
     if (response.status === 429) {
       throw new AiQuotaError(
         `Gemini quota exceeded for model "${model}". ` +
-          `Try GEMINI_MODEL=gemini-2.0-flash or gemini-3.5-flash-lite, or switch AI_PROVIDER=openai. ` +
+          `` +
           (detail ? `Provider detail: ${detail}` : "")
       );
     }
@@ -258,10 +258,11 @@ export async function generateReply(input: {
   try {
     return await runPrimary();
   } catch (error) {
-    if (settings.fallbackEnabled !== true) throw error;
-    const fallbackModel = provider === "gemini"
-      ? (model === "gemini-2.5-flash" ? "gemini-2.5-flash-lite" : "gemini-2.5-flash")
-      : (model === "gpt-4o-mini" ? "gpt-4o" : "gpt-4o-mini");
+    // Gemini replies are pinned to Gemini 3.8 Flash; never silently switch models.
+    if (provider === "gemini" || settings.fallbackEnabled !== true) throw error;
+    const fallbackModel = provider === "openai"
+      ? (model === "gpt-4o-mini" ? "gpt-4o" : "gpt-4o-mini")
+      : model;
     if (fallbackModel === model) throw error;
     try {
       if (provider === "openai") {

@@ -88,7 +88,7 @@ In Vercel, open **Project → Settings → Environment Variables**. Add the foll
    5. `supabase/migrations/20261030000000_ai_model_settings.sql`
 3. Confirm each script completes successfully before running the next one.
 
-Do **not** run any older multi-user schema files. The four files above are the only migrations required by the current single-owner implementation.
+Do **not** run any older multi-user schema files. The five files above are the only migrations required by the current single-owner implementation.
 
 The newest migrations add persistent automation and AI provider/model settings. The AI settings table stores only the selected provider, model, and fallback toggle; API keys remain in Vercel server-side environment variables. The dashboard supports Gemini (`gemini-2.5-flash-lite`, `gemini-2.5-flash`) and OpenAI (`gpt-4o-mini`, `gpt-4o`) when the matching server-side key is configured. The backend intentionally fails safely when required production persistence is unavailable. Do not enable automation until all migrations have been applied successfully.
 

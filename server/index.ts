@@ -447,11 +447,11 @@ app.post("/api/telegram/webhook", async (req, res) => {
   }
   // Auto-reply to new inbound contacts by default for both supported modes.
   // An explicit disabled contact entry always overrides this default.
-  let contactAllowed = allowlist.has(senderId) || !allowlist.size;
+  let contactAllowed = true;
   if (isProfileStoreConfigured()) {
     try {
       const contact = (await listContacts()).find(item => item.senderId === senderId);
-      contactAllowed = contact ? contact.enabled : !allowlist.has(senderId);
+      contactAllowed = contact ? contact.enabled : true;
     } catch {
       await releaseUpdate(updateId).catch(() => undefined);
       return res.status(503).json({ ok: false, error: "Contact permissions unavailable." });

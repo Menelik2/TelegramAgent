@@ -25,13 +25,6 @@ const nav = [{ label: "Overview", icon: Gauge }, { label: "Inbox", icon: Message
 
 function MemoryPanel({ apiRequest, readJson, flash }: { apiRequest: (path: string, init?: RequestInit) => Promise<Response>; readJson: (r: Response) => Promise<Record<string, any>>; flash: (m: string) => void }) {
   const [items, setItems] = useState<Array<{ id: number; memory: string; category: string; createdAt?: string }>>([]);
-  const [aiProvider, setAiProvider] = useState<"gemini" | "openai">("gemini");
-  const [aiModel, setAiModel] = useState("gemini-2.5-flash-lite");
-  const [aiFallback, setAiFallback] = useState(true);
-  const [aiSettingsLoading, setAiSettingsLoading] = useState(false);
-  const [aiSettingsSaving, setAiSettingsSaving] = useState(false);
-  const [aiTesting, setAiTesting] = useState(false);
-  const [aiProviders, setAiProviders] = useState<Array<{id:"gemini"|"openai";label:string;configured:boolean;models:string[]}>>([]);
   const [draft, setDraft] = useState("");
   const [category, setCategory] = useState("preference");
   const [loading, setLoading] = useState(true);
@@ -212,6 +205,13 @@ export default function App() {
   const [inboxError, setInboxError] = useState("");
   const [webhookInfo, setWebhookInfo] = useState<{ expectedUrl?: string | null; matchesExpected?: boolean; webhook?: { url?: string; pending_update_count?: number; last_error_message?: string } } | null>(null);
   const [dashboardToken, setDashboardToken] = useState(() => window.sessionStorage.getItem("dashboardApiToken") || "");
+  const [aiProvider, setAiProvider] = useState<"gemini" | "openai">("gemini");
+  const [aiModel, setAiModel] = useState("gemini-2.5-flash-lite");
+  const [aiFallback, setAiFallback] = useState(true);
+  const [aiSettingsLoading, setAiSettingsLoading] = useState(false);
+  const [aiSettingsSaving, setAiSettingsSaving] = useState(false);
+  const [aiTesting, setAiTesting] = useState(false);
+  const [aiProviders, setAiProviders] = useState<Array<{id:"gemini"|"openai";label:string;configured:boolean;models:string[]}>>([]);
   const apiBase = import.meta.env.VITE_API_BASE_URL || "";
   const apiRequest = (path: string, init: RequestInit = {}) => fetch(`${apiBase}${path}`, { ...init, headers: { ...(init.headers || {}), "x-dashboard-token": dashboardToken } });
   const [draft, setDraft] = useState("");

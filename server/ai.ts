@@ -5,7 +5,7 @@
  *   AI_PROVIDER=openai   + OPENAI_API_KEY  (+ OPENAI_MODEL=gpt-4o recommended)
  *   AI_PROVIDER=gemini   + GEMINI_API_KEY  (+ GEMINI_MODEL=gemini-2.0-flash or flash-lite)
  */
-const DEFAULT_GEMINI_MODEL = "gemini-2.0-flash";
+const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite";
 const DEFAULT_OPENAI_MODEL = "gpt-4o";
 
 type GeminiResponse = {
@@ -134,10 +134,10 @@ async function generateWithOpenAI(input: {
   tone?: string;
   language?: string;
   replyLength?: string;
-}): Promise<string> {
+}, selectedModel?: string): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY is not configured.");
-  const model = process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL;
+  const model = selectedModel || process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL;
   const maxTokens = /long|detailed|natural conversation/i.test(input.replyLength || "") ? 400 : 220;
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -181,11 +181,11 @@ async function generateWithGemini(input: {
   tone?: string;
   language?: string;
   replyLength?: string;
-}): Promise<string> {
+}, selectedModel?: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
   // Prefer a stronger free-capable Flash model when unset; flash-lite is ok for quota but weaker quality.
-  const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+  const model = selectedModel || process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
 
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
@@ -236,21 +236,41 @@ export async function generateReply(input: {
   language?: string;
   replyLength?: string;
 }): Promise<string> {
-  if (!isAiConfigured()) {
-    throw new Error("AI provider is not configured. Set OPENAI_API_KEY or GEMINI_API_KEY on the server.");
-  }
+  const settings = await getAiRuntimeSettings().catch(() => ({
+    provider: (process.env.AI_PROVIDER?.trim().toLowerCase() === "openai" ? "openai" : "gemini") as "openai" | "gemini",
+    model: process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL,
+    fallbackEnabled: true
+  }));
+  const provider = settings.provider;
+  const model = settings.model;
 
-  const provider = providerName();
-  if (provider === "openai") {
-    if (!process.env.OPENAI_API_KEY?.trim()) {
-      throw new Error("AI_PROVIDER=openai but OPENAI_API_KEY is missing.");
+  const runPrimary = async (): Promise<string> => {
+    if (provider === "openai") {
+      if (!process.env.OPENAI_API_KEY?.trim()) throw new Error("The selected OpenAI provider requires OPENAI_API_KEY on the server.");
+      return generateWithOpenAI(input, model);
     }
-    return generateWithOpenAI(input);
-  }
+    if (!process.env.GEMINI_API_KEY?.trim()) throw new Error("GEMINI_API_KEY is not configured.");
+    return generateWithGemini(input, model);
+  };
 
-  if (!process.env.GEMINI_API_KEY?.trim()) {
-    if (process.env.OPENAI_API_KEY?.trim()) return generateWithOpenAI(input);
-    throw new Error("GEMINI_API_KEY is not configured.");
+  try {
+    return await runPrimary();
+  } catch (error) {
+    if (!settings.fallbackEnabled) throw error;
+    const fallbackModel = provider === "gemini"
+      ? (model === "gemini-2.5-flash" ? "gemini-2.5-flash-lite" : "gemini-2.5-flash")
+      : "gpt-4o-mini";
+    if (fallbackModel === model) throw error;
+    try {
+      if (provider === "openai") {
+        if (!process.env.OPENAI_API_KEY?.trim()) throw error;
+        return await generateWithOpenAI(input, fallbackModel);
+      }
+      if (!process.env.GEMINI_API_KEY?.trim()) throw error;
+      return await generateWithGemini(input, fallbackModel);
+    } catch (fallbackError) {
+      throw new Error("Selected AI model and automatic fallback both failed. " +
+        (fallbackError instanceof Error ? fallbackError.message : "Provider unavailable."));
+    }
   }
-  return generateWithGemini(input);
 }

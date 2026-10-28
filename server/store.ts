@@ -42,11 +42,9 @@ export async function claimUpdate(updateId: string): Promise<boolean> {
       payload_hash: updateId.slice(0, 64)
     })
   });
-  // Unique violation / conflict → already processed
   if (response.status === 409) return false;
   if (!response.ok) {
     const body = await response.text().catch(() => "");
-    // If table missing older schema, do not block the webhook forever
     if (response.status === 404 || /does not exist|relation/i.test(body)) return true;
     throw new Error(`Supabase update claim failed (${response.status}).`);
   }
@@ -139,7 +137,6 @@ export async function recordMessage(message: AgentMessage): Promise<void> {
       sender_name: message.senderName.slice(0, 120),
       username: message.username.slice(0, 64),
       direction: message.direction,
-      // Schema column is message_text (not text)
       message_text: message.text.slice(0, 4000),
       created_at: message.createdAt || new Date().toISOString()
     })
@@ -231,7 +228,6 @@ export async function getLastActivityAt(): Promise<string | null> {
   return rows[0]?.created_at || null;
 }
 
-
 export type AiRuntimeSettings = {
   provider: "gemini" | "openai";
   model: string;
@@ -248,22 +244,41 @@ const DEFAULT_AI_SETTINGS: AiRuntimeSettings = {
 /** Read shared AI configuration from Supabase; never stores provider API keys. */
 export async function getAiRuntimeSettings(): Promise<AiRuntimeSettings> {
   if (!isPersistentStoreConfigured()) return DEFAULT_AI_SETTINGS;
-  const response = await supabaseRequest("agent_ai_settings?select=provider,model,fallback_enabled,updated_at&id=eq.1&limit=1");
-  if (!response.ok) {
-    if (response.status === 404) throw new Error("AI settings table is missing. Apply the latest Supabase migration.");
-    throw new Error("Could not read AI runtime settings from persistent storage.");
+  try {
+    const response = await supabaseRequest("agent_ai_settings?select=provider,model,fallback_enabled,updated_at&id=eq.1&limit=1");
+    if (!response.ok) {
+      return {
+        ...DEFAULT_AI_SETTINGS,
+        provider: (process.env.AI_PROVIDER || "").trim().toLowerCase() === "openai" ? "openai" : "gemini",
+        model:
+          (process.env.AI_PROVIDER || "").trim().toLowerCase() === "openai"
+            ? (process.env.OPENAI_MODEL?.trim() || "gpt-4o")
+            : (process.env.GEMINI_MODEL?.trim() || DEFAULT_AI_SETTINGS.model)
+      };
+    }
+    const rows = await response.json() as Array<Record<string, unknown>>;
+    const row = rows[0];
+    if (!row) {
+      return {
+        ...DEFAULT_AI_SETTINGS,
+        provider: (process.env.AI_PROVIDER || "").trim().toLowerCase() === "openai" ? "openai" : "gemini",
+        model:
+          (process.env.AI_PROVIDER || "").trim().toLowerCase() === "openai"
+            ? (process.env.OPENAI_MODEL?.trim() || "gpt-4o")
+            : (process.env.GEMINI_MODEL?.trim() || DEFAULT_AI_SETTINGS.model)
+      };
+    }
+    const provider = row.provider === "openai" ? "openai" : "gemini";
+    const model = typeof row.model === "string" && row.model.trim() ? row.model.trim() : DEFAULT_AI_SETTINGS.model;
+    return {
+      provider,
+      model,
+      fallbackEnabled: row.fallback_enabled === true,
+      updatedAt: row.updated_at ? String(row.updated_at) : undefined
+    };
+  } catch {
+    return DEFAULT_AI_SETTINGS;
   }
-  const rows = await response.json() as Array<Record<string, unknown>>;
-  const row = rows[0];
-  if (!row) return DEFAULT_AI_SETTINGS;
-  const provider = row.provider === "openai" ? "openai" : "gemini";
-  const model = typeof row.model === "string" ? row.model : DEFAULT_AI_SETTINGS.model;
-  return {
-    provider,
-    model,
-    fallbackEnabled: row.fallback_enabled === true,
-    updatedAt: row.updated_at ? String(row.updated_at) : undefined
-  };
 }
 
 /** Upsert validated non-secret model preferences. */
@@ -280,6 +295,12 @@ export async function saveAiRuntimeSettings(settings: AiRuntimeSettings): Promis
       updated_at: new Date().toISOString()
     })
   });
-  if (!response.ok) throw new Error("Could not save AI model settings.");
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    if (/does not exist|relation|404|PGRST/i.test(detail) || response.status === 404) {
+      throw new Error("AI settings table is missing. Run migration 20261030000000_ai_model_settings.sql in Supabase SQL Editor.");
+    }
+    throw new Error("Could not save AI model settings." + (detail ? " " + detail.slice(0, 120) : ""));
+  }
   return { ...settings, updatedAt: new Date().toISOString() };
 }

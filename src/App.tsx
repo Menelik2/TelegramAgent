@@ -356,32 +356,29 @@ export default function App() {
               {!dashboardToken ? <p className="helper-text">Enter and verify your dashboard API token to manage AI settings.</p> : <>
                 <label className="field-label">Provider</label>
                 <select className="form-control" value={aiProvider} disabled={aiSettingsLoading || aiSettingsSaving} onChange={e => {
-                  const next = e.target.value as "gemini" | "openai";
+                  const next = "gemini" as const;
                   setAiProvider(next);
                   const available = aiProviders.find(p => p.id === next)?.models || [];
-                  setAiModel(available[0] || (next === "gemini" ? "gemini-2.5-flash-lite" : "gpt-4o-mini"));
+                  setAiModel("gemini-3.8-flash");
                 }}>
-                  {aiProviders.map(p => <option key={p.id} value={p.id}>{p.label}{p.configured ? "" : " — API key not configured"}</option>)}
+                  {aiProviders.filter(p => p.id === "gemini").map(p => <option key={p.id} value={p.id}>{p.label}{p.configured ? "" : " — API key not configured"}</option>)}
                 </select>
                 <label className="field-label" style={{marginTop:14}}>Model</label>
                 <select className="form-control" value={aiModel} disabled={aiSettingsLoading || aiSettingsSaving} onChange={e => setAiModel(e.target.value)}>
-                  {(aiProviders.find(p => p.id === aiProvider)?.models || (aiProvider === "gemini" ? ["gemini-2.5-flash-lite","gemini-2.5-flash"] : ["gpt-4o-mini","gpt-4o"])).map(m => <option key={m} value={m}>{m}</option>)}
+                  {["gemini-3.8-flash"].map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
-                <label className="permission-row" style={{marginTop:14,cursor:"pointer"}}>
-                  <div className="permission-copy"><b>Automatic fallback</b><span>Try the alternate model if the selected model fails.</span></div>
-                  <input type="checkbox" checked={aiFallback} onChange={e => setAiFallback(e.target.checked)} disabled={aiSettingsSaving}/>
-                </label>
+                <p className="helper-text" style={{marginTop:14}}>Pinned model: Gemini 3.8 Flash. Automatic model fallback is disabled so replies never silently switch models.</p>
                 <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:18}}>
                   <button className="primary-button" disabled={aiSettingsLoading || aiSettingsSaving} onClick={() => {
                     setAiSettingsSaving(true);
-                    apiRequest("/api/agent/ai-settings", {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:aiProvider,model:aiModel,fallbackEnabled:aiFallback})})
+                    apiRequest("/api/agent/ai-settings", {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:"gemini",model:"gemini-3.8-flash",fallbackEnabled:false})})
                       .then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Save failed."); flash("AI model settings saved. New replies will use " + aiModel + "."); })
                       .catch(e => flash(e instanceof Error ? e.message : "Could not save AI settings."))
                       .finally(() => setAiSettingsSaving(false));
                   }}>{aiSettingsSaving ? "Saving…" : "Save model settings"}</button>
                   <button className="secondary-button" disabled={aiSettingsLoading || aiSettingsSaving || aiTesting} onClick={() => {
                     setAiTesting(true);
-                    apiRequest("/api/agent/ai-settings/test", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:aiProvider,model:aiModel})})
+                    apiRequest("/api/agent/ai-settings/test", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:"gemini",model:"gemini-3.8-flash"})})
                       .then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Connection test failed."); flash("Connection successful: " + d.model); })
                       .catch(e => flash(e instanceof Error ? e.message : "Connection test failed."))
                       .finally(() => setAiTesting(false));

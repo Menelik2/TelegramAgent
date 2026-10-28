@@ -230,3 +230,56 @@ export async function getLastActivityAt(): Promise<string | null> {
   const rows = await response.json() as Array<{ created_at?: string }>;
   return rows[0]?.created_at || null;
 }
+
+
+export type AiRuntimeSettings = {
+  provider: "gemini" | "openai";
+  model: string;
+  fallbackEnabled: boolean;
+  updatedAt?: string;
+};
+
+const DEFAULT_AI_SETTINGS: AiRuntimeSettings = {
+  provider: "gemini",
+  model: "gemini-2.5-flash-lite",
+  fallbackEnabled: true
+};
+
+/** Read shared AI configuration from Supabase; never stores provider API keys. */
+export async function getAiRuntimeSettings(): Promise<AiRuntimeSettings> {
+  if (!isPersistentStoreConfigured()) return DEFAULT_AI_SETTINGS;
+  const response = await supabaseRequest("agent_ai_settings?select=provider,model,fallback_enabled,updated_at&id=eq.1&limit=1");
+  if (!response.ok) {
+    if (response.status === 404) throw new Error("AI settings table is missing. Apply the latest Supabase migration.");
+    throw new Error("Could not read AI runtime settings from persistent storage.");
+  }
+  const rows = await response.json() as Array<Record<string, unknown>>;
+  const row = rows[0];
+  if (!row) return DEFAULT_AI_SETTINGS;
+  const provider = row.provider === "openai" ? "openai" : "gemini";
+  const model = typeof row.model === "string" ? row.model : DEFAULT_AI_SETTINGS.model;
+  return {
+    provider,
+    model,
+    fallbackEnabled: row.fallback_enabled === true,
+    updatedAt: row.updated_at ? String(row.updated_at) : undefined
+  };
+}
+
+/** Upsert validated non-secret model preferences. */
+export async function saveAiRuntimeSettings(settings: AiRuntimeSettings): Promise<AiRuntimeSettings> {
+  if (!isPersistentStoreConfigured()) throw new Error("AI model settings require Supabase persistence. Configure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
+  const response = await supabaseRequest("agent_ai_settings?on_conflict=id", {
+    method: "POST",
+    headers: { Prefer: "resolution=merge-duplicates,return=representation" },
+    body: JSON.stringify({
+      id: 1,
+      provider: settings.provider,
+      model: settings.model,
+      fallback_enabled: settings.fallbackEnabled,
+      updated_at: new Date().toISOString()
+    })
+  });
+  if (!response.ok) throw new Error("Could not save AI model settings.");
+  return { ...settings, updatedAt: new Date().toISOString() };
+}

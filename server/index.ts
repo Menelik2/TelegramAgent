@@ -151,6 +151,11 @@ const AI_MODELS = {
   openai: ["gpt-4o-mini", "gpt-4o"]
 } as const;
 
+type AiProvider = keyof typeof AI_MODELS;
+function isAiProvider(value: unknown): value is AiProvider {
+  return value === "gemini" || value === "openai";
+}
+
 app.get("/api/agent/ai-settings", async (_req, res) => {
   try {
     const settings = await getAiRuntimeSettings();
@@ -168,11 +173,11 @@ app.get("/api/agent/ai-settings", async (_req, res) => {
 });
 
 app.put("/api/agent/ai-settings", async (req, res) => {
-  const provider = req.body?.provider;
-  const model = req.body?.model;
-  const fallbackEnabled = req.body?.fallbackEnabled;
-  if (provider !== "gemini" && provider !== "openai") return res.status(400).json({ ok: false, error: "Choose a supported provider." });
-  if (typeof model !== "string" || !(AI_MODELS[provider] as readonly string[]).includes(model)) return res.status(400).json({ ok: false, error: "Choose a supported model for the selected provider." });
+  const provider: unknown = req.body?.provider;
+  const model: unknown = req.body?.model;
+  const fallbackEnabled: unknown = req.body?.fallbackEnabled;
+  if (!isAiProvider(provider)) return res.status(400).json({ ok: false, error: "Choose a supported provider." });
+  if (typeof model !== "string" || !AI_MODELS[provider].includes(model as never)) return res.status(400).json({ ok: false, error: "Choose a supported model for the selected provider." });
   if (typeof fallbackEnabled !== "boolean") return res.status(400).json({ ok: false, error: "fallbackEnabled must be true or false." });
   if (provider === "gemini" && !process.env.GEMINI_API_KEY?.trim()) return res.status(409).json({ ok: false, error: "Add GEMINI_API_KEY to server environment variables first." });
   if (provider === "openai" && !process.env.OPENAI_API_KEY?.trim()) return res.status(409).json({ ok: false, error: "Add OPENAI_API_KEY to server environment variables first." });
@@ -186,10 +191,10 @@ app.put("/api/agent/ai-settings", async (req, res) => {
 });
 
 app.post("/api/agent/ai-settings/test", rateLimit({ name: "ai-model-test", limit: 5, windowMs: 60_000 }), async (req, res) => {
-  const provider = req.body?.provider;
-  const model = req.body?.model;
-  if (provider !== "gemini" && provider !== "openai") return res.status(400).json({ ok: false, error: "Choose a supported provider." });
-  if (typeof model !== "string" || !(AI_MODELS[provider] as readonly string[]).includes(model)) return res.status(400).json({ ok: false, error: "Choose a supported model." });
+  const provider: unknown = req.body?.provider;
+  const model: unknown = req.body?.model;
+  if (!isAiProvider(provider)) return res.status(400).json({ ok: false, error: "Choose a supported provider." });
+  if (typeof model !== "string" || !AI_MODELS[provider].includes(model as never)) return res.status(400).json({ ok: false, error: "Choose a supported model." });
   if (provider === "gemini" && !process.env.GEMINI_API_KEY?.trim()) return res.status(409).json({ ok: false, error: "GEMINI_API_KEY is not configured on the server." });
   if (provider === "openai" && !process.env.OPENAI_API_KEY?.trim()) return res.status(409).json({ ok: false, error: "OPENAI_API_KEY is not configured on the server." });
   try {

@@ -147,7 +147,7 @@ app.get("/api/agent/settings", async (_req, res) => {
   }
 });
 const AI_MODELS = {
-  gemini: ["gemini-3.8-flash"],
+  gemini: ["gemini-3.8-flash", "gemini-3.5-flash-lite"],
   openai: []
 } as const;
 

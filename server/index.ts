@@ -499,6 +499,10 @@ app.post("/api/telegram/webhook", async (req, res) => {
     const messageText = error instanceof Error ? error.message : "Reply processing failed.";
     await logEvent("reply_failed", messageText, { updateId, senderId, chatId });
     if (error instanceof AiQuotaError) {
+      // Release the idempotency claim when the provider is out of quota. Otherwise
+      // a retry is acknowledged as a duplicate forever and the contact never gets
+      // a reply after quota is restored. Security policy and allowlist checks remain.
+      await releaseUpdate(updateId).catch(() => undefined);
       return res.status(429).json({ ok: false, error: messageText, quotaExceeded: true });
     }
     await releaseUpdate(updateId).catch(() => undefined);

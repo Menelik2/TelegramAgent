@@ -86,9 +86,9 @@ function PersonalityPanel({ apiRequest, readJson, flash }: { apiRequest: (path: 
     { id: "medium", label: "Medium" },
     { id: "detailed when needed", label: "Detailed" }
   ];
-  const [tone, setTone] = useState(tones[1].id);
+  const [tone, setTone] = useState(tones[0].id);
   const [language, setLanguage] = useState(languages[0].id);
-  const [replyLength, setReplyLength] = useState(lengths[0].id);
+  const [replyLength, setReplyLength] = useState(lengths[1].id);
   const [memoryEnabled, setMemoryEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -160,7 +160,7 @@ function PersonalityPanel({ apiRequest, readJson, flash }: { apiRequest: (path: 
   );
 }
 
-function ContactsPanel({ apiRequest, readJson, flash, setPage }: { apiRequest: (path: string, init?: RequestInit) => Promise<Response>; readJson: (r: Response) => Promise<Record<string, any>>; flash: (m: string) => void; setPage: (p: string) => void }) {
+function ContactsPanel({ apiRequest, readJson, flash }: { apiRequest: (path: string, init?: RequestInit) => Promise<Response>; readJson: (r: Response) => Promise<Record<string, any>>; flash: (m: string) => void }) {
   const [items, setItems] = useState<Array<{ senderId: string; enabled: boolean; note?: string }>>([]);
   const [loading, setLoading] = useState(true);
   const load = () => {
@@ -203,15 +203,10 @@ export default function App() {
   const [inboxLoading, setInboxLoading] = useState(false);
   const [inboxFilter, setInboxFilter] = useState<"all" | "allowed" | "manual">("all");
   const [inboxError, setInboxError] = useState("");
-  const [webhookInfo, setWebhookInfo] = useState<{ expectedUrl?: string | null; matchesExpected?: boolean; webhook?: { url?: string; pending_update_count?: number; last_error_message?: string } } | null>(null);
   const [dashboardToken, setDashboardToken] = useState(() => window.sessionStorage.getItem("dashboardApiToken") || "");
   const [aiProvider, setAiProvider] = useState<"gemini" | "openai">("gemini");
-  const [aiModel, setAiModel] = useState("gemini-3.5-flash-lite");
-  const [aiFallback, setAiFallback] = useState(true);
+  const [aiModel, setAiModel] = useState("gemini-2.5-flash");
   const [aiSettingsLoading, setAiSettingsLoading] = useState(false);
-  const [aiSettingsSaving, setAiSettingsSaving] = useState(false);
-  const [aiTesting, setAiTesting] = useState(false);
-  const [aiProviders, setAiProviders] = useState<Array<{id:"gemini"|"openai";label:string;configured:boolean;models:string[]}>>([]);
   const apiBase = import.meta.env.VITE_API_BASE_URL || "";
   const apiRequest = (path: string, init: RequestInit = {}) => fetch(`${apiBase}${path}`, { ...init, headers: { ...(init.headers || {}), "x-dashboard-token": dashboardToken } });
   const [draft, setDraft] = useState("");
@@ -238,10 +233,8 @@ export default function App() {
       if (!active) return;
       const s = d.settings || {};
       setAiProvider(s.provider === "openai" ? "openai" : "gemini");
-      setAiModel(typeof s.model === "string" ? s.model : "gemini-3.5-flash-lite");
-      setAiFallback(false);
-      setAiProviders(d.providers || []);
-    }).catch(e => { if (active) flash(e instanceof Error ? e.message : "Could not load AI settings."); })
+      setAiModel(typeof s.model === "string" ? s.model : "gemini-2.5-flash");
+    }).catch(() => { /* defaults remain */ })
       .finally(() => { if (active) setAiSettingsLoading(false); });
     return () => { active = false; };
   }, [dashboardToken, apiBase]);
@@ -335,6 +328,7 @@ export default function App() {
               <button className={inboxFilter === "manual" ? "filter-active" : ""} onClick={() => setInboxFilter("manual")}>Manual</button>
             </div>
             {inboxError ? <p className="helper-text" style={{padding:"8px 16px",color:"#b91c1c"}}>{inboxError}</p> : null}
+            {!dashboardToken ? <p className="helper-text" style={{padding:"12px 16px"}}>Enter dashboard token in Settings to load live inbox.</p> : null}
             {filtered.map(c => <button className={"conversation " + (selectedId === c.id ? "selected" : "")} key={c.id} onClick={() => setSelectedId(c.id)}><div className={"contact-avatar " + c.color}>{c.initials}</div><div className="conversation-copy"><div className="conversation-name"><b>{c.name}</b><time>{c.time}</time></div><p>{c.last}</p></div></button>)}
           </section>
           {selected ? <section className="chat-panel"><div className="chat-header"><div className={"contact-avatar " + selected.color}>{selected.initials}</div><div className="chat-contact"><b>{selected.name}</b><span>{selected.handle}</span></div><button className="secondary-button compact" onClick={() => toggleContact(selected.id)}>{selected.allowed ? "Pause AI" : "Allow AI"}</button></div><div className="message-stream">{selected.messages.map((m,i) => <div key={i} className={"message-row " + (m.from === "ai" ? "outgoing" : "")}><div className={"bubble " + (m.from === "ai" ? "bubble-ai" : "bubble-them")}>{m.text}<time>{m.time}</time></div></div>)}</div><div className="reply-box"><textarea value={draft} onChange={e => setDraft(e.target.value)} placeholder="Write a reply…" rows={2}/><button className="send-button" onClick={() => void sendDemo()} disabled={!draft.trim()}><Send size={16}/> Send</button></div></section> : <section className="chat-panel"><p className="helper-text" style={{padding:40}}>Select a conversation.</p></section>}
@@ -345,53 +339,20 @@ export default function App() {
             <div className="security-note"><ShieldCheck size={18} /><div>
               <b>Dashboard authorization</b>
               <input className="form-control" type="password" value={dashboardToken} onChange={e => setDashboardToken(e.target.value)} placeholder="Paste dashboard API token" />
-              <button className="secondary-button compact" style={{marginTop:10}} onClick={() => apiRequest("/api/agent/settings").then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Auth failed"); flash("Token verified."); }).catch(e => flash(e instanceof Error ? e.message : "Auth failed"))}>Verify token</button>
+              <button className="secondary-button compact" style={{marginTop:10}} onClick={() => apiRequest("/api/agent/settings").then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Auth failed"); flash("Token verified."); void refreshLiveInbox(); }).catch(e => flash(e instanceof Error ? e.message : "Auth failed"))}>Verify token</button>
             </div></div>
             <div className="integration-row"><div><b>Telegram webhook</b><p>{status?.appBaseUrl || "APP_BASE_URL not set"}</p></div>
               <button className="secondary-button compact" disabled={!dashboardToken} onClick={() => apiRequest("/api/agent/telegram/configure-webhook", { method: "POST" }).then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Failed"); flash(d.message || "Webhook configured."); }).catch(e => flash(e instanceof Error ? e.message : "Webhook failed"))}>Configure webhook</button>
             </div>
-            <div className="integration-row"><div><b>AI status</b><p>{status?.aiConfigured ? (status.aiProvider || "ready") : "Not configured"} · settings are stored server-side</p></div></div>
-            <div className="panel" style={{marginTop:18,padding:20}}>
-              <div className="panel-heading"><div><h3>AI provider & model</h3><p>Choose which model generates new Telegram replies.</p></div></div>
-              {!dashboardToken ? <p className="helper-text">Enter and verify your dashboard API token to manage AI settings.</p> : <>
-                <label className="field-label">Provider</label>
-                <select className="form-control" value={aiProvider} disabled={aiSettingsLoading || aiSettingsSaving} onChange={e => {
-                  const next = "gemini" as const;
-                  setAiProvider(next);
-                  const available = aiProviders.find(p => p.id === next)?.models || [];
-                  setAiModel(available[0] || "gemini-3.5-flash-lite");
-                }}>
-                  {aiProviders.filter(p => p.id === "gemini").map(p => <option key={p.id} value={p.id}>{p.label}{p.configured ? "" : " — API key not configured"}</option>)}
-                </select>
-                <label className="field-label" style={{marginTop:14}}>Model</label>
-                <select className="form-control" value={aiModel} disabled={aiSettingsLoading || aiSettingsSaving} onChange={e => setAiModel(e.target.value)}>
-                  {(aiProviders.find(p => p.id === "gemini")?.models || ["gemini-3.8-flash", "gemini-3.5-flash-lite"]).map(m => <option key={m} value={m}>{m === "gemini-3.5-flash-lite" ? "Gemini 3.5 Flash-Lite (fast & cost-efficient)" : "Gemini 3.8 Flash"}</option>)}
-                </select>
-                <p className="helper-text" style={{marginTop:14}}>Choose Gemini 3.8 Flash or Gemini 3.5 Flash-Lite. Automatic model fallback is disabled so replies never silently switch models.</p>
-                <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:18}}>
-                  <button className="primary-button" disabled={aiSettingsLoading || aiSettingsSaving} onClick={() => {
-                    setAiSettingsSaving(true);
-                    apiRequest("/api/agent/ai-settings", {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:aiProvider,model:aiModel,fallbackEnabled:false})})
-                      .then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Save failed."); flash("AI model settings saved. New replies will use " + aiModel + "."); })
-                      .catch(e => flash(e instanceof Error ? e.message : "Could not save AI settings."))
-                      .finally(() => setAiSettingsSaving(false));
-                  }}>{aiSettingsSaving ? "Saving…" : "Save model settings"}</button>
-                  <button className="secondary-button" disabled={aiSettingsLoading || aiSettingsSaving || aiTesting} onClick={() => {
-                    setAiTesting(true);
-                    apiRequest("/api/agent/ai-settings/test", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:aiProvider,model:aiModel})})
-                      .then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Connection test failed."); flash("Connection successful: " + d.model); })
-                      .catch(e => flash(e instanceof Error ? e.message : "Connection test failed."))
-                      .finally(() => setAiTesting(false));
-                  }}>{aiTesting ? "Testing…" : "Test connection"}</button>
-                </div>
-                <p className="helper-text" style={{marginTop:12}}>API keys are configured on the server in Vercel and are never displayed here. Provider changes require the matching server-side API key.</p>
-              </>}
+            <div className="integration-row"><div><b>AI model</b><p>{aiSettingsLoading ? "Loading…" : `${aiProvider} / ${aiModel}`}</p></div>
+              <button className="secondary-button compact" disabled={!dashboardToken} onClick={() => apiRequest("/api/agent/ai-settings", {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:aiProvider,model:aiModel,fallbackEnabled:false})}).then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Save failed"); flash("AI model saved."); }).catch(e => flash(e instanceof Error ? e.message : "Save failed"))}>Save model</button>
             </div>
+            <div className="integration-row"><div><b>AI status</b><p>{status?.aiConfigured ? (status.aiProvider || "ready") : "Not configured"}</p></div></div>
           </div>
         </div>
         : page === "Contacts" ? <div>
           <div className="page-heading"><h1>Contacts</h1></div>
-          {!dashboardToken ? <p className="helper-text">Enter token in Settings.</p> : <ContactsPanel apiRequest={apiRequest} readJson={readJson} flash={flash} setPage={setPage} />}
+          {!dashboardToken ? <p className="helper-text">Enter token in Settings.</p> : <ContactsPanel apiRequest={apiRequest} readJson={readJson} flash={flash} />}
         </div>
         : page === "Memory" ? <div>
           <div className="page-heading"><h1>Memory</h1></div>
@@ -418,16 +379,37 @@ export default function App() {
         </div>
         : page === "Overview" ? <div>
           <div className="page-heading"><h1>Overview</h1><p>Automation {automation ? "ON" : "OFF"} · AI {status?.aiProvider || (status?.aiConfigured ? "ready" : "missing")}</p></div>
+          {!dashboardToken ? (
+            <div className="notice-card" style={{ marginBottom: 16 }}>
+              <ShieldCheck size={18} />
+              <div>
+                <b>Dashboard token required for live data</b>
+                <p>Go to Settings, paste your DASHBOARD_API_TOKEN, and tap Verify. Then metrics, inbox, and activity will load.</p>
+                <button className="secondary-button compact" style={{ marginTop: 10 }} onClick={() => setPage("Settings")}>Open Settings</button>
+              </div>
+            </div>
+          ) : null}
           <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:12,marginBottom:20}}>
             <div className="panel" style={{padding:16}}><div className="eyebrow">MESSAGES</div><h2 style={{margin:0}}>{liveMetrics.messages}</h2></div>
             <div className="panel" style={{padding:16}}><div className="eyebrow">REPLIES</div><h2 style={{margin:0}}>{liveMetrics.replies}</h2></div>
             <div className="panel" style={{padding:16}}><div className="eyebrow">REVIEW</div><h2 style={{margin:0}}>{liveMetrics.review}</h2></div>
           </div>
-          <button className="secondary-button" onClick={() => setPage("Inbox")}>Open inbox</button>
-          <div className="panel" style={{padding:16,marginTop:16}}>
+          <div className="panel" style={{padding:16,marginBottom:16}}>
+            <div className="permission-row"><div className="permission-copy"><b>Last webhook</b><span>{status?.lastWebhookAt ? new Date(status.lastWebhookAt).toLocaleString() : "No webhook received yet"}</span></div></div>
+            <div className="permission-row"><div className="permission-copy"><b>Last activity</b><span>{status?.lastActivityAt ? new Date(status.lastActivityAt).toLocaleString() : "—"}</span></div></div>
+            <div className="permission-row"><div className="permission-copy"><b>Storage</b><span>{status?.storageConfigured ? "Supabase connected" : "Not configured"}</span></div></div>
+            <div className="permission-row"><div className="permission-copy"><b>Telegram</b><span>{status?.telegramConfigured ? "Configured" : "Missing token/secret"}</span></div></div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+            <button className="secondary-button" onClick={() => setPage("Inbox")}>Open inbox</button>
+            {dashboardToken ? <button className="secondary-button" onClick={() => void refreshLiveInbox()} disabled={inboxLoading}>{inboxLoading ? "Refreshing…" : "Refresh live data"}</button> : null}
+          </div>
+          <div className="panel" style={{padding:16,marginTop:0}}>
             <h3 style={{marginTop:0}}>Recent activity</h3>
+            {!dashboardToken ? <p className="helper-text">Enter the dashboard token in Settings to load activity.</p> : null}
+            {dashboardToken && activityEvents.length === 0 ? <p className="helper-text">No events yet. When Telegram delivers messages, they appear here.</p> : null}
             <ul style={{listStyle:"none",padding:0,margin:0,maxHeight:280,overflow:"auto"}}>
-              {activityEvents.slice(0,20).map((e,i) => (<li key={e.id ?? i} style={{padding:"8px 0",borderBottom:"1px solid rgba(255,255,255,0.06)"}}><b>{e.kind}</b> — {e.detail}</li>))}
+              {activityEvents.slice(0,20).map((e,i) => (<li key={e.id ?? i} style={{padding:"8px 0",borderBottom:"1px solid rgba(255,255,255,0.06)"}}><b>{e.kind}</b> — {e.detail}{e.createdAt ? <span className="helper-text"> · {new Date(e.createdAt).toLocaleString()}</span> : null}</li>))}
             </ul>
           </div>
         </div>

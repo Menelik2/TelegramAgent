@@ -81,11 +81,34 @@ app.post("/api/agent/telegram/configure-webhook", async (_req, res) => {
     if (!telegramResponse.ok || !result.ok) return res.status(502).json({ ok: false, error: result.description || "Telegram rejected webhook configuration." });
     const infoResponse = await fetch("https://api.telegram.org/bot" + token + "/getWebhookInfo");
     const infoRaw = await infoResponse.text();
-    let info: { ok?: boolean; result?: { url?: string; pending_update_count?: number; last_error_message?: string } } = {};
-    try { info = JSON.parse(infoRaw) as typeof info; } catch { /* */ }
-    await logEvent("webhook_configured", "Telegram webhook registered (business + private messages).", {});
-    const warning = info.result?.last_error_message;
-    return res.json({ ok: true, webhookUrl, pendingUpdates: info.result?.pending_update_count ?? 0, warning, message: warning ? "Webhook registered, but Telegram reports a delivery problem: " + warning : "Telegram webhook registered successfully. Next, allow a contact and enable automation." });
+    let info: { ok?: boolean; description?: string; result?: { url?: string; pending_update_count?: number; last_error_message?: string; last_error_date?: number; max_connections?: number; allowed_updates?: string[] } };
+    try { info = JSON.parse(infoRaw) as typeof info; }
+    catch { return res.status(502).json({ ok: false, error: "Webhook was registered, but Telegram returned invalid JSON for getWebhookInfo. Check Telegram API availability." }); }
+    if (!infoResponse.ok || !info.ok || !info.result) {
+      return res.status(502).json({ ok: false, error: info.description || "Webhook was registered, but its status could not be verified." });
+    }
+    const actualUrl = String(info.result.url || "");
+    const warning = info.result.last_error_message;
+    const matchesExpected = actualUrl === webhookUrl;
+    await logEvent("webhook_configured", matchesExpected
+      ? "Telegram webhook registered and verified."
+      : "Telegram webhook registered, but the returned URL differs from the requested URL.", {});
+    return res.json({
+      ok: true,
+      webhookUrl,
+      actualWebhookUrl: actualUrl,
+      matchesExpected,
+      pendingUpdates: info.result.pending_update_count ?? 0,
+      lastErrorAt: info.result.last_error_date ? new Date(info.result.last_error_date * 1000).toISOString() : null,
+      allowedUpdates: info.result.allowed_updates || [],
+      maxConnections: info.result.max_connections ?? null,
+      warning,
+      message: warning
+        ? "Webhook registered, but Telegram reports a delivery problem: " + warning
+        : !matchesExpected
+          ? "Telegram's webhook URL does not match the configured app URL. Correct APP_BASE_URL and configure again."
+          : "Telegram webhook registered and verified. Next, allow a contact and enable automation."
+    });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : "Could not reach Telegram." });
   }

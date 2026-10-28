@@ -235,8 +235,8 @@ export async function generateReply(input: {
   tone?: string;
   language?: string;
   replyLength?: string;
-}): Promise<string> {
-  const settings = await getAiRuntimeSettings().catch(() => ({
+}, overrideSettings?: { provider: "gemini" | "openai"; model: string; fallbackEnabled?: boolean }): Promise<string> {
+  const settings = overrideSettings || await getAiRuntimeSettings().catch(() => ({
     provider: (process.env.AI_PROVIDER?.trim().toLowerCase() === "openai" ? "openai" : "gemini") as "openai" | "gemini",
     model: process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL,
     fallbackEnabled: true
@@ -256,7 +256,7 @@ export async function generateReply(input: {
   try {
     return await runPrimary();
   } catch (error) {
-    if (!settings.fallbackEnabled) throw error;
+    if (settings.fallbackEnabled !== true) throw error;
     const fallbackModel = provider === "gemini"
       ? (model === "gemini-2.5-flash" ? "gemini-2.5-flash-lite" : "gemini-2.5-flash")
       : "gpt-4o-mini";

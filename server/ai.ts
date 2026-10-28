@@ -7,7 +7,7 @@ import { getAiRuntimeSettings } from "./store.js";
  *   AI_PROVIDER=openai   + OPENAI_API_KEY  (+ OPENAI_MODEL=gpt-4o recommended)
  *   AI_PROVIDER=gemini   + GEMINI_API_KEY  (+ GEMINI_MODEL=gemini-2.0-flash or flash-lite)
  */
-const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite";
+const DEFAULT_GEMINI_MODEL = "gemini-3.8-flash";
 const DEFAULT_OPENAI_MODEL = "gpt-4o";
 
 type GeminiResponse = {

@@ -147,8 +147,8 @@ app.get("/api/agent/settings", async (_req, res) => {
   }
 });
 const AI_MODELS = {
-  gemini: ["gemini-2.5-flash-lite", "gemini-2.5-flash"],
-  openai: ["gpt-4o-mini", "gpt-4o"]
+  gemini: ["gemini-3.8-flash"],
+  openai: []
 } as const;
 
 type AiProvider = keyof typeof AI_MODELS;

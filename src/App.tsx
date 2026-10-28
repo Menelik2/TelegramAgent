@@ -237,9 +237,9 @@ export default function App() {
       if (!r.ok) throw new Error(d.error || "Could not load AI settings.");
       if (!active) return;
       const s = d.settings || {};
-      setAiProvider(s.provider === "openai" ? "openai" : "gemini");
-      setAiModel(s.model || "gemini-2.5-flash-lite");
-      setAiFallback(s.fallbackEnabled !== false);
+      setAiProvider("gemini");
+      setAiModel("gemini-3.8-flash");
+      setAiFallback(false);
       setAiProviders(d.providers || []);
     }).catch(e => { if (active) flash(e instanceof Error ? e.message : "Could not load AI settings."); })
       .finally(() => { if (active) setAiSettingsLoading(false); });

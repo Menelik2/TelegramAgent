@@ -31,24 +31,34 @@ async function supabaseRequest(path: string, init: RequestInit = {}): Promise<Re
   });
 }
 
+/** Dedup Telegram updates using public.telegram_updates (requires payload_hash). */
 export async function claimUpdate(updateId: string): Promise<boolean> {
   if (!isPersistentStoreConfigured()) return true;
-  const response = await supabaseRequest("agent_updates", {
+  const response = await supabaseRequest("telegram_updates", {
     method: "POST",
     headers: { Prefer: "return=minimal" },
-    body: JSON.stringify({ update_id: updateId })
+    body: JSON.stringify({
+      update_id: updateId,
+      payload_hash: updateId.slice(0, 64)
+    })
   });
+  // Unique violation / conflict → already processed
   if (response.status === 409) return false;
-  if (!response.ok) throw new Error(`Supabase update claim failed (${response.status}).`);
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    // If table missing older schema, do not block the webhook forever
+    if (response.status === 404 || /does not exist|relation/i.test(body)) return true;
+    throw new Error(`Supabase update claim failed (${response.status}).`);
+  }
   return true;
 }
 
 export async function releaseUpdate(updateId: string): Promise<void> {
   if (!isPersistentStoreConfigured()) return;
-  await supabaseRequest(`agent_updates?update_id=eq.${encodeURIComponent(updateId)}`, {
+  await supabaseRequest(`telegram_updates?update_id=eq.${encodeURIComponent(updateId)}`, {
     method: "DELETE",
     headers: { Prefer: "return=minimal" }
-  });
+  }).catch(() => undefined);
 }
 
 export async function recordEvent(event: AgentEvent): Promise<void> {
@@ -129,21 +139,20 @@ export async function recordMessage(message: AgentMessage): Promise<void> {
       sender_name: message.senderName.slice(0, 120),
       username: message.username.slice(0, 64),
       direction: message.direction,
-      text: message.text.slice(0, 4000),
+      // Schema column is message_text (not text)
+      message_text: message.text.slice(0, 4000),
       created_at: message.createdAt || new Date().toISOString()
     })
   });
-  if (!response.ok) throw new Error(`Supabase message write failed (${response.status}).`);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Supabase message write failed (${response.status})${detail ? ": " + detail.slice(0, 200) : ""}`);
+  }
 }
 
-export async function listConversationMessages(chatId: string): Promise<AgentMessage[]> {
-  if (!isPersistentStoreConfigured()) return [];
-  const response = await supabaseRequest(
-    `agent_messages?select=id,update_id,telegram_message_id,business_connection_id,chat_id,sender_id,sender_name,username,direction,text,created_at&chat_id=eq.${encodeURIComponent(chatId)}&order=created_at.asc&limit=200`
-  );
-  if (!response.ok) throw new Error(`Supabase conversation read failed (${response.status}).`);
-  const rows = await response.json() as Array<Record<string, unknown>>;
-  return rows.map(row => ({
+function mapMessageRow(row: Record<string, unknown>): AgentMessage {
+  const text = String(row.message_text ?? row.text ?? "");
+  return {
     id: Number(row.id),
     updateId: row.update_id ? String(row.update_id) : undefined,
     telegramMessageId: row.telegram_message_id != null ? Number(row.telegram_message_id) : undefined,
@@ -153,22 +162,39 @@ export async function listConversationMessages(chatId: string): Promise<AgentMes
     senderName: String(row.sender_name || ""),
     username: String(row.username || ""),
     direction: row.direction === "outgoing" ? "outgoing" : "incoming",
-    text: String(row.text || ""),
+    text,
     createdAt: String(row.created_at || "")
-  }));
+  };
+}
+
+export async function listConversationMessages(chatId: string): Promise<AgentMessage[]> {
+  if (!isPersistentStoreConfigured()) return [];
+  const response = await supabaseRequest(
+    `agent_messages?select=id,update_id,telegram_message_id,business_connection_id,chat_id,sender_id,sender_name,username,direction,message_text,created_at&chat_id=eq.${encodeURIComponent(chatId)}&order=created_at.asc&limit=200`
+  );
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Supabase conversation read failed (${response.status})${detail ? ": " + detail.slice(0, 180) : ""}`);
+  }
+  const rows = await response.json() as Array<Record<string, unknown>>;
+  return rows.map(mapMessageRow);
 }
 
 export async function listInbox(): Promise<InboxConversation[]> {
   if (!isPersistentStoreConfigured()) return [];
   const response = await supabaseRequest(
-    "agent_messages?select=chat_id,business_connection_id,sender_id,sender_name,username,direction,text,created_at&order=created_at.desc&limit=500"
+    "agent_messages?select=chat_id,business_connection_id,sender_id,sender_name,username,direction,message_text,created_at&order=created_at.desc&limit=500"
   );
-  if (!response.ok) throw new Error(`Supabase inbox read failed (${response.status}).`);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Supabase inbox read failed (${response.status})${detail ? ": " + detail.slice(0, 180) : ""}`);
+  }
   const rows = await response.json() as Array<Record<string, unknown>>;
   const byChat = new Map<string, InboxConversation>();
   for (const row of rows) {
     const chatId = String(row.chat_id || "");
     if (!chatId) continue;
+    const text = String(row.message_text ?? row.text ?? "");
     const existing = byChat.get(chatId);
     if (!existing) {
       byChat.set(chatId, {
@@ -177,14 +203,13 @@ export async function listInbox(): Promise<InboxConversation[]> {
         senderId: String(row.sender_id || ""),
         senderName: String(row.sender_name || row.username || chatId),
         username: String(row.username || ""),
-        lastMessage: String(row.text || "").slice(0, 280),
+        lastMessage: text.slice(0, 280),
         lastMessageAt: String(row.created_at || ""),
         lastDirection: row.direction === "outgoing" ? "outgoing" : "incoming",
         messageCount: 1
       });
     } else {
       existing.messageCount += 1;
-      // Prefer a real contact sender id over empty/outgoing noise when aggregating
       if (!existing.senderId && row.sender_id) existing.senderId = String(row.sender_id);
       if (row.direction === "incoming" && row.sender_id) {
         existing.senderId = String(row.sender_id);

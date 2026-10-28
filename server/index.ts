@@ -3,7 +3,7 @@ import express from "express";
 import cors from "cors";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { decideReply, safeText } from "./policy.js";
-import { rateLimit } from "./rate-limit.js";
+import { consumeRateLimit, rateLimit } from "./rate-limit.js";
 import { generateReply, isAiConfigured, AiQuotaError, getAiProviderLabel } from "./ai.js";
 import { getFeatureConfig, isInQuietHours, pickReplyDelayMs, sleep, isSameLocalDay, featureStatusSummary } from "./features.js";
 import { claimUpdate, getLastActivityAt, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate } from "./store.js";
@@ -302,10 +302,19 @@ app.get("/api/telegram/webhook", (_req, res) => {
     time: new Date().toISOString()
   });
 });
-app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 120, windowMs: 60_000 }), async (req, res) => {
+app.post("/api/telegram/webhook", async (req, res) => {
   const expected = process.env.TELEGRAM_WEBHOOK_SECRET || "";
   const provided = req.header("x-telegram-bot-api-secret-token") || "";
   if (!expected || !provided || !constantTimeEqual(provided, expected)) return res.status(401).json({ ok: false, error: "Invalid webhook secret." });
+  // Only authenticated Telegram deliveries consume the webhook rate limit.
+  // Invalid public requests must not be able to exhaust the quota before Telegram arrives.
+  const webhookLimit = consumeRateLimit("telegram-webhook:" + (req.ip || req.socket.remoteAddress || "unknown"), 120, 60_000);
+  res.setHeader("RateLimit-Limit", "120");
+  if (!webhookLimit.allowed) {
+    res.setHeader("Retry-After", String(webhookLimit.retryAfterSeconds));
+    await logEvent("webhook_rate_limited", "Authenticated webhook delivery rate limit reached.");
+    return res.status(429).json({ ok: false, error: "Telegram webhook rate limit reached; retry later." });
+  }
   if (process.env.VERCEL && !isPersistentStoreConfigured()) return res.status(503).json({ ok: false, error: "Supabase persistence is required for reliable Vercel webhook processing." });
   const update = req.body as Record<string, any>;
   const updateId = String(update?.update_id ?? "");

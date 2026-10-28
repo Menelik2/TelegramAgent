@@ -194,15 +194,12 @@ app.post("/api/agent/ai-settings/test", rateLimit({ name: "ai-model-test", limit
   if (provider === "openai" && !process.env.OPENAI_API_KEY?.trim()) return res.status(409).json({ ok: false, error: "OPENAI_API_KEY is not configured on the server." });
   try {
     const { generateReply } = await import("./ai.js");
-    // Test the requested model without changing the active persisted configuration.
-    const original = await getAiRuntimeSettings();
-    await saveAiRuntimeSettings({ provider, model, fallbackEnabled: false });
-    try {
-      const reply = await generateReply({ incomingText: "Reply with exactly: Connection successful." });
-      return res.json({ ok: true, tested: true, provider, model, sample: reply.slice(0, 100) });
-    } finally {
-      await saveAiRuntimeSettings(original);
-    }
+    // Test the requested model as a one-off override; never mutate active settings.
+    const reply = await generateReply(
+      { incomingText: "Reply with exactly: Connection successful." },
+      { provider, model, fallbackEnabled: false }
+    );
+    return res.json({ ok: true, tested: true, provider, model, sample: reply.slice(0, 100) });
   } catch (error) {
     return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : "Model connection test failed." });
   }

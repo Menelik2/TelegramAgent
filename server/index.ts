@@ -6,7 +6,7 @@ import { decideReply, safeText } from "./policy.js";
 import { consumeRateLimit, rateLimit } from "./rate-limit.js";
 import { generateReply, isAiConfigured, AiQuotaError, getAiProviderLabel } from "./ai.js";
 import { getFeatureConfig, isInQuietHours, pickReplyDelayMs, sleep, isSameLocalDay, featureStatusSummary } from "./features.js";
-import { claimUpdate, getLastActivityAt, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate } from "./store.js";
+import { claimUpdate, getLastActivityAt, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate, getAiRuntimeSettings, saveAiRuntimeSettings } from "./store.js";
 import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getPreferences, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setAutomationEnabled, setContact } from "./profile-store.js";
 
 const app = express();
@@ -146,6 +146,68 @@ app.get("/api/agent/settings", async (_req, res) => {
     return res.status(503).json({ ok: false, error: "Could not load persistent agent settings." });
   }
 });
+const AI_MODELS = {
+  gemini: ["gemini-2.5-flash-lite", "gemini-2.5-flash"],
+  openai: ["gpt-4o-mini", "gpt-4o"]
+} as const;
+
+app.get("/api/agent/ai-settings", async (_req, res) => {
+  try {
+    const settings = await getAiRuntimeSettings();
+    return res.json({
+      ok: true, settings,
+      providers: [
+        { id: "gemini", label: "Google Gemini", configured: Boolean(process.env.GEMINI_API_KEY?.trim()), models: AI_MODELS.gemini },
+        { id: "openai", label: "OpenAI", configured: Boolean(process.env.OPENAI_API_KEY?.trim()), models: AI_MODELS.openai }
+      ],
+      persistent: isPersistentStoreConfigured()
+    });
+  } catch (error) {
+    return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Could not load AI settings." });
+  }
+});
+
+app.put("/api/agent/ai-settings", async (req, res) => {
+  const provider = req.body?.provider;
+  const model = req.body?.model;
+  const fallbackEnabled = req.body?.fallbackEnabled;
+  if (provider !== "gemini" && provider !== "openai") return res.status(400).json({ ok: false, error: "Choose a supported provider." });
+  if (typeof model !== "string" || !(AI_MODELS[provider] as readonly string[]).includes(model)) return res.status(400).json({ ok: false, error: "Choose a supported model for the selected provider." });
+  if (typeof fallbackEnabled !== "boolean") return res.status(400).json({ ok: false, error: "fallbackEnabled must be true or false." });
+  if (provider === "gemini" && !process.env.GEMINI_API_KEY?.trim()) return res.status(409).json({ ok: false, error: "Add GEMINI_API_KEY to server environment variables first." });
+  if (provider === "openai" && !process.env.OPENAI_API_KEY?.trim()) return res.status(409).json({ ok: false, error: "Add OPENAI_API_KEY to server environment variables first." });
+  try {
+    const settings = await saveAiRuntimeSettings({ provider, model, fallbackEnabled });
+    await logEvent("ai_settings_updated", "AI provider/model settings updated from the dashboard.");
+    return res.json({ ok: true, settings });
+  } catch (error) {
+    return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Could not save AI settings." });
+  }
+});
+
+app.post("/api/agent/ai-settings/test", rateLimit({ name: "ai-model-test", limit: 5, windowMs: 60_000 }), async (req, res) => {
+  const provider = req.body?.provider;
+  const model = req.body?.model;
+  if (provider !== "gemini" && provider !== "openai") return res.status(400).json({ ok: false, error: "Choose a supported provider." });
+  if (typeof model !== "string" || !(AI_MODELS[provider] as readonly string[]).includes(model)) return res.status(400).json({ ok: false, error: "Choose a supported model." });
+  if (provider === "gemini" && !process.env.GEMINI_API_KEY?.trim()) return res.status(409).json({ ok: false, error: "GEMINI_API_KEY is not configured on the server." });
+  if (provider === "openai" && !process.env.OPENAI_API_KEY?.trim()) return res.status(409).json({ ok: false, error: "OPENAI_API_KEY is not configured on the server." });
+  try {
+    const { generateReply } = await import("./ai.js");
+    // Test the requested model without changing the active persisted configuration.
+    const original = await getAiRuntimeSettings();
+    await saveAiRuntimeSettings({ provider, model, fallbackEnabled: false });
+    try {
+      const reply = await generateReply({ incomingText: "Reply with exactly: Connection successful." });
+      return res.json({ ok: true, tested: true, provider, model, sample: reply.slice(0, 100) });
+    } finally {
+      await saveAiRuntimeSettings(original);
+    }
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : "Model connection test failed." });
+  }
+});
+
 app.get("/api/agent/contacts", async (_req, res) => {
   try {
     if (!isProfileStoreConfigured()) return res.status(503).json({ ok: false, error: "Configure Supabase first." });

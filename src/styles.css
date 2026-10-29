@@ -153,3 +153,58 @@ body{background:var(--canvas);color:var(--text)}
  .send-button{padding:0 11px}
  .conversation{padding:12px}
 }
+
+
+/* Mobile inbox: use a focused, one-screen conversation flow instead of stacking both panes. */
+@media(max-width:900px){
+  .inbox-page{width:100%;min-width:0}
+  .inbox-layout{display:flex!important;flex-direction:column;height:auto!important;min-height:0!important;overflow:visible!important;border:0!important;background:transparent!important;gap:12px}
+  .inbox-list{display:flex;flex-direction:column;max-height:none!important;min-height:0;overflow:visible!important;border:1px solid #252935!important;border-radius:14px;background:#11141b}
+  .inbox-list .filter-row{position:static!important;display:flex;gap:6px;padding:10px 12px!important;border-bottom:1px solid #252935}
+  .inbox-list .filter-row button{flex:1;min-height:36px;padding:8px 7px;font-size:11px}
+  .inbox-list .searchbox{position:static!important;width:100%;padding:12px!important;border-bottom:0}
+  .conversation{min-height:74px;padding:12px!important}
+  .chat-panel{display:flex;min-height:0!important;height:min(65dvh,620px);border:1px solid #292d39;border-radius:14px;overflow:hidden}
+  .chat-header{flex-wrap:nowrap;min-height:68px;padding:11px 12px!important;gap:9px}
+  .chat-header .contact-avatar{width:38px;height:38px;flex-shrink:0}
+  .chat-contact{flex:1;min-width:0}
+  .chat-header .secondary-button{flex-shrink:0;max-width:118px;white-space:nowrap}
+  .message-stream{flex:1;min-height:0!important;max-height:none!important;padding:14px 12px!important;gap:12px;overscroll-behavior:contain}
+  .message-row{max-width:100%}
+  .bubble{max-width:88%;font-size:13px;line-height:1.55;padding:10px 12px}
+  .reply-box{flex-shrink:0;display:flex;align-items:flex-end;gap:8px;padding:10px!important;padding-bottom:max(10px,env(safe-area-inset-bottom))!important}
+  .reply-box textarea{min-height:44px;max-height:110px;padding:10px 11px;font-size:16px;resize:none}
+  .send-button{min-height:44px;min-width:68px;padding:0 12px}
+  .chat-placeholder{min-height:180px}
+}
+@media(max-width:560px){
+  .inbox-toolbar{gap:10px;margin:0 0 12px}
+  .inbox-count{font-size:11px}
+  .inbox-toolbar .searchbox{width:100%;min-height:44px}
+  .inbox-list .searchbox input{font-size:16px}
+  .inbox-list .filter-row{padding:8px!important}
+  .conversation{gap:10px;min-height:72px}
+  .conversation .contact-avatar{width:39px;height:39px;flex-shrink:0}
+  .conversation-name b{font-size:12px;max-width:180px}
+  .conversation-copy>p{font-size:11px}
+  .conversation-meta{gap:6px;font-size:9px}
+  .chat-panel{height:58dvh;min-height:350px!important;max-height:560px}
+  .chat-header .chat-contact b{font-size:12px}
+  .chat-contact span{font-size:10px}
+  .chat-header .secondary-button{padding:8px!important;font-size:10px}
+  .reply-box{gap:7px}
+  .send-button{min-width:44px;width:44px;padding:0;font-size:0;gap:0}
+  .send-button svg{width:18px;height:18px}
+  .bubble{max-width:91%;font-size:12px}
+  .message-empty{padding:18px 12px}
+}
+@media(max-width:380px){
+  .content{padding-left:9px;padding-right:9px}
+  .page-heading h1{font-size:23px}
+  .page-heading .secondary-button{padding:9px 10px}
+  .conversation-name b{max-width:135px}
+  .chat-header{gap:7px}
+  .chat-header .contact-avatar{width:34px;height:34px}
+  .chat-header .secondary-button{max-width:104px}
+  .inbox-list .filter-row button{font-size:10px;padding:7px 4px}
+}

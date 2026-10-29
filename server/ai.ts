@@ -200,8 +200,8 @@ async function generateWithGemini(input: {
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: buildSystemInstruction(input) }] },
         contents: [{ role: "user", parts: [{ text: buildUserPrompt(input) }] }],
-        // Gemini 3.8 Flash does not accept temperature; unsupported generation
-        // parameters cause a 400 response and the webhook cannot send a reply.
+        // Keep generation settings compatible with the selected Gemini 3-series model;
+        // unsupported parameters can cause a 400 response and block webhook replies.
         generationConfig: {
           maxOutputTokens: /long|detailed|natural conversation/i.test(input.replyLength || "") ? 400 : 220
         }

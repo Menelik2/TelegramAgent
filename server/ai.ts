@@ -140,6 +140,7 @@ async function generateWithOpenAI(input: {
   tone?: string;
   language?: string;
   replyLength?: string;
+  persona?: MiniMePersona;
 }, selectedModel?: string): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY is not configured.");
@@ -187,6 +188,7 @@ async function generateWithGemini(input: {
   tone?: string;
   language?: string;
   replyLength?: string;
+  persona?: MiniMePersona;
 }, selectedModel?: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
@@ -241,6 +243,7 @@ export async function generateReply(input: {
   tone?: string;
   language?: string;
   replyLength?: string;
+  persona?: MiniMePersona;
 }, overrideSettings?: { provider: "gemini" | "openai"; model: string; fallbackEnabled?: boolean }): Promise<string> {
   const settings = overrideSettings || await getAiRuntimeSettings().catch(() => ({
     provider: (process.env.AI_PROVIDER?.trim().toLowerCase() === "openai" ? "openai" : "gemini") as "openai" | "gemini",

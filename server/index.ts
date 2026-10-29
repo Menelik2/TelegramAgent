@@ -72,8 +72,8 @@ app.put("/api/agent/minime", async (req, res) => {
   const allowedEnergy = new Set(["Chill","Energetic","Balanced"]);
   if (typeof p.name !== "string" || typeof p.status !== "string" || !Array.isArray(p.personality) || !Array.isArray(p.values) || typeof p.energy !== "string" || typeof p.words !== "string" || typeof p.story !== "string")
     return res.status(400).json({ ok: false, error: "Invalid MiniMe profile." });
-  const personality = [...new Set(p.personality.filter((v: unknown): v is string => typeof v === "string" && allowedPersonality.has(v)))];
-  const values = [...new Set(p.values.filter((v: unknown): v is string => typeof v === "string" && allowedValues.has(v)))];
+  const personality: string[] = [...new Set<string>(p.personality.filter((v: unknown): v is string => typeof v === "string" && allowedPersonality.has(v)))];
+  const values: string[] = [...new Set<string>(p.values.filter((v: unknown): v is string => typeof v === "string" && allowedValues.has(v)))];
   if (personality.length > 4 || values.length > 3 || !allowedEnergy.has(p.energy))
     return res.status(400).json({ ok: false, error: "Choose up to 4 personality traits, up to 3 values, and a valid energy setting." });
   const profile = { name: safeText(p.name, 80) || DEFAULT_MINIME_PROFILE.name, status: p.status === "Away" ? "Away" : "Active",

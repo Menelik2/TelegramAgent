@@ -2,8 +2,7 @@ import { getAiRuntimeSettings } from "./store.js";
 
 /**
  * AI providers for Telegram auto-replies.
- * Goal: replies should feel like a real person (MiniMe-style) — clear, warm, useful.
- *
+ * *
  *   AI_PROVIDER=openai   + OPENAI_API_KEY  (+ OPENAI_MODEL=gpt-4o recommended)
  *   AI_PROVIDER=gemini   + GEMINI_API_KEY  (+ GEMINI_MODEL=gemini-3.5-flash-lite)
  */
@@ -15,7 +14,6 @@ type GeminiResponse = {
   error?: { message?: string; status?: string; code?: number };
 };
 
-type MiniMePersona = { name?: string; status?: string; personality?: string[]; energy?: string; values?: string[]; words?: string; story?: string };
 
 type OpenAiResponse = {
   choices?: Array<{ message?: { content?: string } }>;
@@ -68,12 +66,10 @@ function buildSystemInstruction(input: {
   tone?: string;
   language?: string;
   replyLength?: string;
-  persona?: MiniMePersona;
 }): string {
   return [
     "You write Telegram messages AS the account owner — a real person. Not a helpdesk bot. Not a public AI.",
     "Your job is the same as a high-quality personal agent (like a personal assistant): keep chats moving with clear, natural, useful replies so the owner does not miss people.",
-    input.persona ? "OWNER MINIME PROFILE (follow as behavioral guidance):\n" + `Name: ${input.persona.name || "Owner"}; personality: ${(input.persona.personality || []).join(", ")}; energy: ${input.persona.energy || "Balanced"}; values: ${(input.persona.values || []).join(", ")}.\nPersonal description: ${input.persona.words || ""}\nOwner story (use only when relevant, never invent details): ${input.persona.story || ""}` : "",
     "If anyone suspects this is automated, you failed.",
     "",
     "WHAT GREAT REPLIES LOOK LIKE:",
@@ -140,7 +136,6 @@ async function generateWithOpenAI(input: {
   tone?: string;
   language?: string;
   replyLength?: string;
-  persona?: MiniMePersona;
 }, selectedModel?: string): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY is not configured.");
@@ -188,7 +183,6 @@ async function generateWithGemini(input: {
   tone?: string;
   language?: string;
   replyLength?: string;
-  persona?: MiniMePersona;
 }, selectedModel?: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
@@ -243,7 +237,6 @@ export async function generateReply(input: {
   tone?: string;
   language?: string;
   replyLength?: string;
-  persona?: MiniMePersona;
 }, overrideSettings?: { provider: "gemini" | "openai"; model: string; fallbackEnabled?: boolean }): Promise<string> {
   const settings = overrideSettings || await getAiRuntimeSettings().catch(() => ({
     provider: (process.env.AI_PROVIDER?.trim().toLowerCase() === "openai" ? "openai" : "gemini") as "openai" | "gemini",

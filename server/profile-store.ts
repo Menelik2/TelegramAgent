@@ -74,27 +74,3 @@ export async function getEnabledMemories(): Promise<string[]> {
   return (await r.json() as any[]).map(x => String(x.memory).slice(0, 1000));
 }
 
-export type MiniMeProfile = { name: string; status: string; personality: string[]; energy: string; values: string[]; words: string; story: string };
-export const DEFAULT_MINIME_PROFILE: MiniMeProfile = {
-  name: 'Menelik', status: 'Active', personality: ['Warm','Patient','Focused','Caring'], energy: 'Balanced',
-  values: ['Quality','Relationships','Creativity'], words: 'I treat everyone like a friend — warm and welcoming, never pushy.', story: ''
-};
-export async function getMiniMeProfile(): Promise<MiniMeProfile> {
-  if (!configured()) throw new Error('MiniMe profile requires Supabase persistence. Configure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
-  const r = await request('agent_preferences?select=minime_name,minime_status,minime_personality,minime_energy,minime_values,minime_words,minime_story&id=eq.1&limit=1');
-  if (!r.ok) throw new Error('MiniMe profile could not be loaded. Apply supabase/migrations/20261029000000_minime_profile.sql.');
-  const x = (await r.json() as any[])[0];
-  if (!x) return DEFAULT_MINIME_PROFILE;
-  return { name: String(x.minime_name || DEFAULT_MINIME_PROFILE.name), status: String(x.minime_status || DEFAULT_MINIME_PROFILE.status),
-    personality: Array.isArray(x.minime_personality) ? x.minime_personality.map(String).slice(0,4) : DEFAULT_MINIME_PROFILE.personality,
-    energy: String(x.minime_energy || DEFAULT_MINIME_PROFILE.energy),
-    values: Array.isArray(x.minime_values) ? x.minime_values.map(String).slice(0,3) : DEFAULT_MINIME_PROFILE.values,
-    words: String(x.minime_words || ''), story: String(x.minime_story || '') };
-}
-export async function saveMiniMeProfile(p: MiniMeProfile): Promise<void> {
-  if (!configured()) throw new Error('MiniMe profile requires Supabase persistence. Configure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
-  const r = await request('agent_preferences?on_conflict=id', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-    body: JSON.stringify({ id: 1, minime_name: p.name.slice(0,80), minime_status: p.status, minime_personality: p.personality.slice(0,4),
-      minime_energy: p.energy, minime_values: p.values.slice(0,3), minime_words: p.words.slice(0,300), minime_story: p.story.slice(0,1200), updated_at: new Date().toISOString() }) });
-  if (!r.ok) throw new Error('MiniMe profile could not be saved. Check that the MiniMe migration has been applied.');
-}

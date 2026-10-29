@@ -208,3 +208,56 @@ body{background:var(--canvas);color:var(--text)}
   .chat-header .secondary-button{max-width:104px}
   .inbox-list .filter-row button{font-size:10px;padding:7px 4px}
 }
+
+
+/* Inbox mobile: use a dedicated conversation view instead of stacking the chat below the list. */
+@media(max-width:900px){
+ .inbox-layout{display:flex!important;flex-direction:column;height:auto!important;min-height:0!important;overflow:hidden!important;gap:0}
+ .inbox-list{width:100%;max-height:none!important;min-height:280px;border-right:0!important;border-bottom:0!important;overflow:visible}
+ .inbox-list .searchbox{position:relative;top:auto}
+ .inbox-list .filter-row{position:relative;top:auto!important}
+ .chat-panel{width:100%;min-height:calc(100dvh - 240px);height:auto;max-height:none}
+ .message-stream{flex:1;min-height:260px;max-height:none!important;overflow-y:auto}
+ .reply-box{padding-bottom:max(10px,env(safe-area-inset-bottom))}
+}
+@media(max-width:560px){
+ .inbox-page .page-heading{margin-bottom:16px;align-items:center;gap:10px}
+ .inbox-page .page-heading h1{font-size:24px}
+ .inbox-toolbar{gap:10px;margin:0 0 12px}
+ .inbox-count{font-size:11px}
+ .inbox-layout{border:0;border-radius:0;overflow:visible;background:transparent}
+ .inbox-list{background:#11141b;border:1px solid #252935!important;border-radius:14px;overflow:hidden}
+ .inbox-list.mobile-hidden{display:none!important}
+ .inbox-list .searchbox{padding:12px}
+ .inbox-list .filter-row{display:flex;gap:5px;padding:8px 10px 10px;border-bottom:1px solid #252935}
+ .inbox-list .filter-row button{flex:1;min-width:0;padding:9px 5px;font-size:11px}
+ .conversation{padding:12px!important;gap:10px;min-height:76px}
+ .conversation .contact-avatar{width:40px;height:40px;flex-shrink:0}
+ .conversation-copy{min-width:0}
+ .conversation-name b{max-width:175px;font-size:12px}
+ .conversation-copy>p{max-width:100%;font-size:11px}
+ .conversation-meta{gap:6px;font-size:9px}
+ .permission-chip{font-size:9px}
+ .chat-panel{display:none;min-height:calc(100dvh - 210px);height:calc(100dvh - 210px);max-height:760px;border:1px solid #252935;border-radius:14px;overflow:hidden}
+ .chat-panel.mobile-chat-active{display:flex}
+ .chat-header{position:relative;flex-wrap:nowrap;min-height:68px;padding:10px;gap:8px}
+ .mobile-back-button{display:inline-grid;place-items:center;flex-shrink:0;width:34px;height:36px;border:1px solid #303543;border-radius:9px;background:#1a1d27;color:#e8e5f5}
+ .chat-header .contact-avatar{width:36px;height:36px;flex-shrink:0}
+ .chat-contact{flex:1;min-width:0}
+ .chat-contact b{font-size:12px}
+ .chat-contact span{font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+ .chat-header .secondary-button{font-size:10px;padding:8px 7px;gap:4px;flex-shrink:0}
+ .message-stream{min-height:0!important;padding:16px 10px;gap:12px}
+ .bubble{max-width:88%;font-size:12px;padding:10px 11px}
+ .reply-box{position:relative;flex-shrink:0;align-items:flex-end;gap:7px;padding:10px}
+ .reply-box textarea{font-size:16px;min-height:44px;padding:10px;border-radius:11px}
+ .send-button{min-height:44px;padding:0 11px;white-space:nowrap}
+ .chat-placeholder{display:none}
+ .chat-placeholder.mobile-chat-active{display:flex}
+}
+@media(min-width:561px) and (max-width:900px){
+ .inbox-list.mobile-hidden{display:none!important}
+ .chat-panel{display:none}
+ .chat-panel.mobile-chat-active{display:flex}
+ .mobile-back-button{display:inline-grid;place-items:center;flex-shrink:0;width:34px;height:36px;border:1px solid #303543;border-radius:9px;background:#1a1d27;color:#e8e5f5}
+}

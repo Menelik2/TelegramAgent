@@ -366,7 +366,7 @@ export default function App() {
             <div className="integration-row"><div><b>AI status</b><p>{status?.aiConfigured ? (status.aiProvider || "ready") : "Not configured"}</p></div></div>
           </div>
         </div>
-        : page === "MiniMe" ? <MiniMe flash={flash} />
+        : page === "MiniMe" ? <MiniMe flash={flash} apiRequest={apiRequest} readJson={readJson} />
         : page === "Contacts" ? <div>
           <div className="page-heading"><h1>Contacts</h1></div>
           {!dashboardToken ? <p className="helper-text">Enter token in Settings.</p> : <ContactsPanel apiRequest={apiRequest} readJson={readJson} flash={flash} />}

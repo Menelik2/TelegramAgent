@@ -367,8 +367,12 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
     await logEvent("business_connection", connection.is_enabled ? "Business connection enabled." : "Business connection disabled.", { updateId, senderId: ownerId || undefined });
     return res.json({ ok: true, connectionReceived: true, enabled: Boolean(connection.is_enabled) });
   }
+  // Telegram may deliver normal bot chats and Telegram Business chats through different update fields.
+  // Keep the update type in logs so unsupported payloads can be diagnosed instead of appearing as silent failures.
   const businessMessage = update.business_message;
   const directMessage = update.message;
+  const editedBusinessMessage = update.edited_business_message;
+  const editedDirectMessage = update.edited_message;
   let message: any = null;
   let businessConnectionId = "";
   let mode: "business" | "direct" = "business";
@@ -376,19 +380,33 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
     message = businessMessage;
     businessConnectionId = String(businessMessage.business_connection_id);
     mode = "business";
+  } else if (editedBusinessMessage && !editedBusinessMessage.from?.is_bot && editedBusinessMessage.business_connection_id) {
+    // Edited messages are eligible only when their update has not already been processed.
+    message = editedBusinessMessage;
+    businessConnectionId = String(editedBusinessMessage.business_connection_id);
+    mode = "business";
   } else if (directMessage && !directMessage.from?.is_bot && directMessage.chat?.type === "private" && !directMessage.via_bot) {
     message = directMessage;
     businessConnectionId = "direct";
     mode = "direct";
+  } else if (editedDirectMessage && !editedDirectMessage.from?.is_bot && editedDirectMessage.chat?.type === "private" && !editedDirectMessage.via_bot) {
+    message = editedDirectMessage;
+    businessConnectionId = "direct";
+    mode = "direct";
   } else {
-    await logEvent("ignored", "Unsupported update ignored.", { updateId });
-    return res.json({ ok: true, ignored: true });
+    const updateType = Object.keys(update).filter(key => key !== "update_id").join(", ") || "unknown";
+    await logEvent("ignored", "Unsupported Telegram update ignored (type: " + updateType + ").", { updateId });
+    return res.json({ ok: true, ignored: true, updateType });
   }
   const senderId = String(message.from?.id ?? "");
   const chatId = String(message.chat?.id ?? "");
-  const text = safeText(message.text ?? message.caption ?? "");
-  if (!text || !senderId || !chatId) {
-    await logEvent("ignored", "Empty or unsupported message ignored.", { updateId, senderId, chatId });
+  // Text and captions can be replied to directly. For common media-only messages, provide a short
+  // contextual prompt instead of silently dropping the conversation; never send raw media metadata to the model.
+  const messageText = typeof message.text === "string" ? message.text : typeof message.caption === "string" ? message.caption : "";
+  const mediaFallback = message.photo ? "[The contact sent a photo without a caption. Acknowledge it and ask what they would like to know.]" : message.video ? "[The contact sent a video without a caption. Acknowledge it and ask what they would like to know.]" : message.voice || message.audio ? "[The contact sent a voice/audio message. Politely ask them to provide the message as text if you cannot understand it.]" : message.sticker ? "[The contact sent a sticker. Reply briefly and naturally to acknowledge it.]" : message.document ? "[The contact sent a document without a caption. Ask what they would like help with.]" : message.animation ? "[The contact sent a GIF. Acknowledge it naturally.]" : "";
+  const text = safeText(messageText || mediaFallback);
+  if (!senderId || !chatId || !text) {
+    await logEvent("ignored", "Message has no supported text or common media payload.", { updateId, senderId, chatId });
     return res.json({ ok: true, ignored: true, reason: "Unsupported message type." });
   }
   const connectionOwnerId = mode === "business" ? businessOwnerByConnection.get(businessConnectionId) : undefined;

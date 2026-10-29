@@ -531,8 +531,6 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(typingPayload)
       });
     } catch { /* ignore */ }
-    const delayMs = pickReplyDelayMs(features);
-    if (delayMs > 0) await sleep(delayMs);
     const reply = await generateReply({
       incomingText: text,
       tone: preferences.tone,
@@ -544,6 +542,9 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
       await logEvent("owner_review_required", "AI marked this message for owner review.", { updateId, senderId, chatId });
       return res.json({ ok: true, escalated: true, sent: false });
     }
+    // Add a short, randomized pause after the reply is ready, before sending it.
+    const delayMs = pickReplyDelayMs(features);
+    if (delayMs > 0) await sleep(delayMs);
     const sendPayload: Record<string, unknown> = { chat_id: chatId, text: reply };
     if (mode === "business" && businessConnectionId && businessConnectionId !== "direct") {
       sendPayload.business_connection_id = businessConnectionId;

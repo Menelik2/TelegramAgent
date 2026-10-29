@@ -62,11 +62,27 @@ function sanitizeHumanReply(text: string): string {
   return out.slice(0, 2000);
 }
 
+function detectMessageLanguage(text: string): "English" | "Amharic" | "mixed" {
+  // Ethiopic block covers Amharic Fidel; Latin letters indicate English/Latin-script text.
+  const hasAmharic = /[\\u1200-\\u137F]/u.test(text);
+  const hasLatin = /[A-Za-z]/.test(text);
+  if (hasAmharic && hasLatin) return "mixed";
+  if (hasAmharic) return "Amharic";
+  return "English";
+}
+
 function buildSystemInstruction(input: {
   tone?: string;
   language?: string;
   replyLength?: string;
+  incomingText?: string;
 }): string {
+  const detectedLanguage = detectMessageLanguage(input.incomingText || "");
+  const languageRule = detectedLanguage === "Amharic"
+    ? "MANDATORY: The latest incoming message is Amharic written in Ethiopic/Ge'ez script. Write the entire reply in natural Amharic using Ethiopic/Ge'ez script. Do not reply in English or transliterated Latin characters."
+    : detectedLanguage === "English"
+      ? "MANDATORY: The latest incoming message is English. Write the entire reply in English. Do not reply in Amharic."
+      : "MANDATORY: The latest incoming message mixes English and Amharic. Reply using the same language mix and scripts as the sender; do not switch to only one language without a clear reason.";
   return [
     "You write Telegram messages AS the account owner — a real person. Not a helpdesk bot. Not a public AI.",
     "Your job is the same as a high-quality personal agent (like a personal assistant): keep chats moving with clear, natural, useful replies so the owner does not miss people.",
@@ -92,6 +108,7 @@ function buildSystemInstruction(input: {
     "- Amharic (ፊደል) → clear, correct Amharic in Ge’ez script.",
     "- Mixed chat → same mix they used.",
     "- Never force Amharic onto pure English, or English onto pure Amharic.",
+    languageRule,
     "",
     "AMHARIC QUALITY:",
     "- Natural everyday Amharic, not broken or random latin-only when they used ፊደል.",
@@ -113,7 +130,8 @@ function buildSystemInstruction(input: {
     "",
     "OUTPUT: only the message text to send. No quotes. No analysis. No second draft.",
     "Preferred tone: " + (input.tone || "warm, clear, human — professional when needed, friendly when the chat is friendly") + ".",
-    "Language: " + (input.language || "STRICT match sender: English→English, Amharic→Amharic, mixed→mixed") + ".",
+    "Detected incoming language: " + detectedLanguage + ". " + languageRule,
+    "Saved language preference (secondary to the sender's language): " + (input.language || "match the sender") + ".",
     "Length: " + (input.replyLength || "concise but complete — answer the point fully without padding") + "."
   ].join("\n");
 }
@@ -153,7 +171,7 @@ async function generateWithOpenAI(input: {
       temperature: 0.7,
       max_tokens: maxTokens,
       messages: [
-        { role: "system", content: buildSystemInstruction(input) },
+        { role: "system", content: buildSystemInstruction({ ...input, incomingText: input.incomingText }) },
         { role: "user", content: buildUserPrompt(input) }
       ]
     })

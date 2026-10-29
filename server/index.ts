@@ -6,7 +6,7 @@ import { decideReply, safeText } from "./policy.js";
 import { rateLimit } from "./rate-limit.js";
 import { generateReply, isAiConfigured, AiQuotaError, getAiProviderLabel } from "./ai.js";
 import { getFeatureConfig, isInQuietHours, pickReplyDelayMs, sleep, isSameLocalDay, featureStatusSummary } from "./features.js";
-import { claimUpdate, getLastActivityAt, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate, getAiRuntimeSettings, saveAiRuntimeSettings } from "./store.js";
+import { claimUpdate, clearStoredInboxHistory, getLastActivityAt, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate, getAiRuntimeSettings, saveAiRuntimeSettings } from "./store.js";
 import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getPreferences, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setAutomationEnabled, setContact } from "./profile-store.js";
 
 const app = express();
@@ -233,6 +233,15 @@ app.put("/api/agent/preferences", async (req, res) => {
 app.get("/api/inbox", requireDashboardAuth, async (_req, res) => {
   try { return res.json({ ok: true, persistent: isPersistentStoreConfigured(), conversations: await listInbox() }); }
   catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Live inbox unavailable." }); }
+});
+app.delete("/api/inbox/history", requireDashboardAuth, async (_req, res) => {
+  try {
+    const deletedCount = await clearStoredInboxHistory();
+    await logEvent("inbox_history_cleared", `Owner cleared ${deletedCount} stored inbox message copies; Telegram messages were not changed.`);
+    return res.json({ ok: true, deletedCount, message: "Stored inbox history cleared. Telegram private messages were not changed." });
+  } catch (error) {
+    return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Could not clear stored inbox history." });
+  }
 });
 app.get("/api/inbox/:chatId/messages", requireDashboardAuth, async (req, res) => {
   const chatId = String(req.params.chatId || "");

@@ -72,7 +72,7 @@ app.post("/api/agent/telegram/configure-webhook", async (_req, res) => {
     const webhookUrl = baseUrl + "/api/telegram/webhook";
     const telegramResponse = await fetch("https://api.telegram.org/bot" + token + "/setWebhook", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ url: webhookUrl, secret_token: secret, allowed_updates: ["business_connection", "business_message", "message"], drop_pending_updates: false })
+      body: JSON.stringify({ url: webhookUrl, secret_token: secret, allowed_updates: ["business_connection", "business_message", "message", "edited_business_message", "edited_message"], drop_pending_updates: false })
     });
     const raw = await telegramResponse.text();
     let result: { ok?: boolean; description?: string; result?: boolean };

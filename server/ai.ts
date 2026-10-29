@@ -5,7 +5,7 @@ import { getAiRuntimeSettings } from "./store.js";
  * Goal: replies should feel like a real person (MiniMe-style) — clear, warm, useful.
  *
  *   AI_PROVIDER=openai   + OPENAI_API_KEY  (+ OPENAI_MODEL=gpt-4o recommended)
- *   AI_PROVIDER=gemini   + GEMINI_API_KEY  (+ GEMINI_MODEL=gemini-2.0-flash or flash-lite)
+ *   AI_PROVIDER=gemini   + GEMINI_API_KEY  (+ GEMINI_MODEL=gemini-3.5-flash-lite)
  */
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite";
 const DEFAULT_OPENAI_MODEL = "gpt-4o";
@@ -215,7 +215,6 @@ async function generateWithGemini(input: {
     if (response.status === 429) {
       throw new AiQuotaError(
         `Gemini quota exceeded for model "${model}". ` +
-          `` +
           (detail ? `Provider detail: ${detail}` : "")
       );
     }
@@ -259,7 +258,7 @@ export async function generateReply(input: {
   try {
     return await runPrimary();
   } catch (error) {
-    // Gemini replies are pinned to Gemini 3.8 Flash; never silently switch models.
+    // Gemini replies never silently switch models.
     if (provider === "gemini" || settings.fallbackEnabled !== true) throw error;
     const fallbackModel = provider === "openai"
       ? (model === "gpt-4o-mini" ? "gpt-4o" : "gpt-4o-mini")

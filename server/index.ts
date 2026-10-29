@@ -414,8 +414,16 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
   }
   let contactAllowed = allowlist.has(senderId);
   if (isProfileStoreConfigured()) {
-    try { const contact = (await listContacts()).find(item => item.senderId === senderId); contactAllowed = contact ? contact.enabled : allowlist.has(senderId); }
-    catch { await releaseUpdate(updateId).catch(() => undefined); return res.status(503).json({ ok: false, error: "Contact permissions unavailable." }); }
+    try {
+      const contact = (await listContacts()).find(item => item.senderId === senderId);
+      // A saved contact preference is authoritative. If storage cannot be read,
+      // only the explicit environment allowlist remains eligible; never open access.
+      contactAllowed = contact ? contact.enabled : allowlist.has(senderId);
+    } catch (error) {
+      console.error("contact_permissions_read_failed", error instanceof Error ? error.message : "unknown");
+      contactAllowed = allowlist.has(senderId);
+      await logEvent("contact_permissions_unavailable", "Could not read saved contact permissions; checked explicit environment allowlist only.", { updateId, senderId, chatId });
+    }
   }
   if (isPersistentStoreConfigured()) {
     try {
@@ -459,8 +467,17 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
   }
   if (!process.env.TELEGRAM_BOT_TOKEN) { await releaseUpdate(updateId).catch(() => undefined); return res.status(503).json({ ok: false, error: "Telegram bot token is not configured." }); }
   try {
-    const preferences = await getPreferences();
-    const memories = preferences.memoryEnabled ? await getEnabledMemories() : [];
+    // Personalization is optional: a missing preferences/memory table must not
+    // prevent an otherwise eligible contact from receiving an auto-reply.
+    const defaultPreferences = { tone: "warm, clear, human — professional when needed, friendly when the chat is friendly", language: "strictly match the sender's language", replyLength: "concise but complete", memoryEnabled: false };
+    let preferences = defaultPreferences;
+    try { preferences = await getPreferences(); }
+    catch (error) { await logEvent("preferences_read_failed", error instanceof Error ? error.message : "Could not load preferences.", { updateId, senderId, chatId }); }
+    let memories: string[] = [];
+    if (preferences.memoryEnabled) {
+      try { memories = await getEnabledMemories(); }
+      catch (error) { await logEvent("memory_read_failed", error instanceof Error ? error.message : "Could not load memories; continuing without them.", { updateId, senderId, chatId }); }
+    }
     let recentMessages: string[] = [];
     if (isPersistentStoreConfigured()) {
       try {
@@ -528,6 +545,9 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
     const messageText = error instanceof Error ? error.message : "Reply processing failed.";
     await logEvent("reply_failed", messageText, { updateId, senderId, chatId });
     if (error instanceof AiQuotaError) {
+      // Release the claimed update so Telegram can retry after quota/billing is fixed.
+      // Otherwise a retry would be treated as a duplicate and the contact never replied.
+      await releaseUpdate(updateId).catch(() => undefined);
       return res.status(429).json({ ok: false, error: messageText, quotaExceeded: true });
     }
     await releaseUpdate(updateId).catch(() => undefined);

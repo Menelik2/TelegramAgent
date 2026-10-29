@@ -7,7 +7,7 @@ import { rateLimit } from "./rate-limit.js";
 import { generateReply, isAiConfigured, AiQuotaError, getAiProviderLabel } from "./ai.js";
 import { getFeatureConfig, isInQuietHours, pickReplyDelayMs, sleep, isSameLocalDay, featureStatusSummary } from "./features.js";
 import { claimUpdate, getLastActivityAt, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate, getAiRuntimeSettings, saveAiRuntimeSettings } from "./store.js";
-import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getPreferences, getMiniMeProfile, saveMiniMeProfile, DEFAULT_MINIME_PROFILE, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setAutomationEnabled, setContact } from "./profile-store.js";
+import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getPreferences, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setAutomationEnabled, setContact } from "./profile-store.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -61,45 +61,6 @@ app.get("/api/status", async (_req, res) => {
   });
 });
 app.use("/api/agent", requireDashboardAuth);
-app.get("/api/agent/minime", async (_req, res) => {
-  try { return res.json({ ok: true, persistent: isProfileStoreConfigured(), profile: await getMiniMeProfile() }); }
-  catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Could not load MiniMe profile." }); }
-});
-app.post("/api/agent/minime/test", rateLimit({ name: "minime-test", limit: 10, windowMs: 60_000 }), async (req, res) => {
-  const incomingText = safeText(req.body?.message, 1500);
-  if (!incomingText) return res.status(400).json({ ok: false, error: "Enter a sample message to test MiniMe." });
-  try {
-    const persona = await getMiniMeProfile();
-    const { generateReply } = await import("./ai.js");
-    const reply = await generateReply({
-      incomingText,
-      tone: safeText(req.body?.tone, 80) || undefined,
-      language: safeText(req.body?.language, 80) || undefined,
-      recentContext: "This is a MiniMe preview test. Generate a reply as if responding to the sample incoming message. Do not send any Telegram message.",
-      persona
-    });
-    if (reply === "[ESCALATE]") return res.json({ ok: true, reply: "MiniMe recommends reviewing this message personally rather than replying automatically.", escalated: true });
-    return res.json({ ok: true, reply });
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : "MiniMe could not generate a test reply." });
-  }
-});
-app.put("/api/agent/minime", async (req, res) => {
-  const p = req.body?.profile || req.body || {};
-  const allowedPersonality = new Set(["Funny","Warm","Direct","Patient","Playful","Focused","Humble","Confident","Storyteller","Caring","Creative","Curious"]);
-  const allowedValues = new Set(["Quality","Relationships","Speed","Honesty","Creativity","Value","Growth","Trust","Family"]);
-  const allowedEnergy = new Set(["Chill","Energetic","Balanced"]);
-  if (typeof p.name !== "string" || typeof p.status !== "string" || !Array.isArray(p.personality) || !Array.isArray(p.values) || typeof p.energy !== "string" || typeof p.words !== "string" || typeof p.story !== "string")
-    return res.status(400).json({ ok: false, error: "Invalid MiniMe profile." });
-  const personality: string[] = [...new Set<string>(p.personality.filter((v: unknown): v is string => typeof v === "string" && allowedPersonality.has(v)))];
-  const values: string[] = [...new Set<string>(p.values.filter((v: unknown): v is string => typeof v === "string" && allowedValues.has(v)))];
-  if (personality.length > 4 || values.length > 3 || !allowedEnergy.has(p.energy))
-    return res.status(400).json({ ok: false, error: "Choose up to 4 personality traits, up to 3 values, and a valid energy setting." });
-  const profile = { name: safeText(p.name, 80) || DEFAULT_MINIME_PROFILE.name, status: p.status === "Away" ? "Away" : "Active",
-    personality, energy: p.energy, values, words: safeText(p.words, 300), story: safeText(p.story, 1200) };
-  try { await saveMiniMeProfile(profile); await logEvent("minime_profile_saved", "Owner updated the MiniMe AI persona."); return res.json({ ok: true, persistent: true, profile }); }
-  catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Could not save MiniMe profile." }); }
-});
 app.post("/api/agent/telegram/configure-webhook", async (_req, res) => {
   const token = process.env.TELEGRAM_BOT_TOKEN || "";
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET || "";
@@ -499,11 +460,6 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
   if (!process.env.TELEGRAM_BOT_TOKEN) { await releaseUpdate(updateId).catch(() => undefined); return res.status(503).json({ ok: false, error: "Telegram bot token is not configured." }); }
   try {
     const preferences = await getPreferences();
-    const persona = await getMiniMeProfile().catch(() => DEFAULT_MINIME_PROFILE);
-    if (persona.status === "Away") {
-      await logEvent("minime_away", "MiniMe status is Away; automatic reply skipped.", { updateId, senderId, chatId });
-      return res.json({ ok: true, ignored: true, reason: "MiniMe status is Away" });
-    }
     const memories = preferences.memoryEnabled ? await getEnabledMemories() : [];
     let recentMessages: string[] = [];
     if (isPersistentStoreConfigured()) {
@@ -538,8 +494,7 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
       tone: preferences.tone,
       language: preferences.language,
       recentContext: contextParts.join("\n\n") || undefined,
-      replyLength: preferences.replyLength,
-      persona
+      replyLength: preferences.replyLength
     });
     if (reply === "[ESCALATE]") {
       await logEvent("owner_review_required", "AI marked this message for owner review.", { updateId, senderId, chatId });

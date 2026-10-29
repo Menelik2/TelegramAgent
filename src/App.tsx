@@ -233,8 +233,9 @@ export default function App() {
       if (!r.ok) throw new Error(d.error || "Could not load AI settings.");
       if (!active) return;
       const s = d.settings || {};
-      setAiProvider(s.provider === "openai" ? "openai" : "gemini");
-      setAiModel(typeof s.model === "string" ? s.model : "gemini-3.5-flash-lite");
+      // This dashboard currently exposes Gemini 3.5 Flash-Lite as its supported model.
+      setAiProvider("gemini");
+      setAiModel("gemini-3.5-flash-lite");
     }).catch(() => { /* defaults remain */ })
       .finally(() => { if (active) setAiSettingsLoading(false); });
     return () => { active = false; };

@@ -64,7 +64,7 @@ function sanitizeHumanReply(text: string): string {
 
 function detectMessageLanguage(text: string): "English" | "Amharic" | "mixed" {
   // Ethiopic block covers Amharic Fidel; Latin letters indicate English/Latin-script text.
-  const hasAmharic = /[\\u1200-\\u137F]/u.test(text);
+  const hasAmharic = /[\u1200-\u137F]/u.test(text);
   const hasLatin = /[A-Za-z]/.test(text);
   if (hasAmharic && hasLatin) return "mixed";
   if (hasAmharic) return "Amharic";

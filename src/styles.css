@@ -70,3 +70,11 @@ body{background:var(--canvas);color:var(--text)}
   .inbox-list{max-height:240px}
 }
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition:none!important;animation:none!important}}
+
+
+/* AI model controls */
+.ai-model-settings{align-items:flex-start;gap:18px}
+.ai-model-copy{flex:1;min-width:0}
+.ai-model-copy .form-control{margin-top:8px;max-width:100%}
+.ai-model-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding-top:20px}
+@media(max-width:600px){.ai-model-settings{flex-direction:column}.ai-model-actions{padding-top:0;width:100%}.ai-model-actions button{flex:1}}

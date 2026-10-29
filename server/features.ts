@@ -23,8 +23,8 @@ function hour(env: string | undefined, fallback: number): number {
 }
 
 export function getFeatureConfig(): FeatureConfig {
-  const delayMin = Math.max(0, Math.floor(num(process.env.REPLY_DELAY_MS_MIN, 1200)));
-  const delayMaxRaw = Math.max(0, Math.floor(num(process.env.REPLY_DELAY_MS_MAX, 3200)));
+  const delayMin = Math.max(0, Math.floor(num(process.env.REPLY_DELAY_MS_MIN, 10000)));
+  const delayMaxRaw = Math.max(0, Math.floor(num(process.env.REPLY_DELAY_MS_MAX, 10000)));
   const delayMax = Math.max(delayMin, delayMaxRaw);
   const quietStart = hour(process.env.QUIET_HOURS_START, -1);
   const quietEnd = hour(process.env.QUIET_HOURS_END, -1);

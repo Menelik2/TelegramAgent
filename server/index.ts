@@ -65,6 +65,25 @@ app.get("/api/agent/minime", async (_req, res) => {
   try { return res.json({ ok: true, persistent: isProfileStoreConfigured(), profile: await getMiniMeProfile() }); }
   catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Could not load MiniMe profile." }); }
 });
+app.post("/api/agent/minime/test", rateLimit({ name: "minime-test", limit: 10, windowMs: 60_000 }), async (req, res) => {
+  const incomingText = safeText(req.body?.message, 1500);
+  if (!incomingText) return res.status(400).json({ ok: false, error: "Enter a sample message to test MiniMe." });
+  try {
+    const persona = await getMiniMeProfile();
+    const { generateReply } = await import("./ai.js");
+    const reply = await generateReply({
+      incomingText,
+      tone: safeText(req.body?.tone, 80) || undefined,
+      language: safeText(req.body?.language, 80) || undefined,
+      recentContext: "This is a MiniMe preview test. Generate a reply as if responding to the sample incoming message. Do not send any Telegram message.",
+      persona
+    });
+    if (reply === "[ESCALATE]") return res.json({ ok: true, reply: "MiniMe recommends reviewing this message personally rather than replying automatically.", escalated: true });
+    return res.json({ ok: true, reply });
+  } catch (error) {
+    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : "MiniMe could not generate a test reply." });
+  }
+});
 app.put("/api/agent/minime", async (req, res) => {
   const p = req.body?.profile || req.body || {};
   const allowedPersonality = new Set(["Funny","Warm","Direct","Patient","Playful","Focused","Humble","Confident","Storyteller","Caring","Creative","Curious"]);

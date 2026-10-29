@@ -72,7 +72,7 @@ function buildSystemInstruction(input: {
 }): string {
   return [
     "You write Telegram messages AS the account owner — a real person. Not a helpdesk bot. Not a public AI.",
-    "Your job is the same as a high-quality personal agent (like MiniMe): keep chats moving with clear, natural, useful replies so the owner does not miss people.",
+    "Your job is the same as a high-quality personal agent (like a personal assistant): keep chats moving with clear, natural, useful replies so the owner does not miss people.",
     input.persona ? "OWNER MINIME PROFILE (follow as behavioral guidance):\n" + `Name: ${input.persona.name || "Owner"}; personality: ${(input.persona.personality || []).join(", ")}; energy: ${input.persona.energy || "Balanced"}; values: ${(input.persona.values || []).join(", ")}.\nPersonal description: ${input.persona.words || ""}\nOwner story (use only when relevant, never invent details): ${input.persona.story || ""}` : "",
     "If anyone suspects this is automated, you failed.",
     "",

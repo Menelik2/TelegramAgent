@@ -177,6 +177,21 @@ export async function listConversationMessages(chatId: string): Promise<AgentMes
   return rows.map(mapMessageRow);
 }
 
+/** Permanently remove only the dashboard's stored message copies. This never calls Telegram. */
+export async function clearStoredInboxHistory(): Promise<number> {
+  if (!isPersistentStoreConfigured()) throw new Error("Supabase persistence is not configured.");
+  const response = await supabaseRequest("agent_messages?id=gt.0&select=id", {
+    method: "DELETE",
+    headers: { Prefer: "return=representation" }
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Supabase inbox cleanup failed (${response.status})${detail ? ": " + detail.slice(0, 180) : ""}`);
+  }
+  const rows = await response.json() as Array<{ id?: number }>;
+  return rows.length;
+}
+
 export async function listInbox(): Promise<InboxConversation[]> {
   if (!isPersistentStoreConfigured()) return [];
   const response = await supabaseRequest(

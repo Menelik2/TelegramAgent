@@ -232,7 +232,6 @@ export default function App() {
       const d = await readJson(r);
       if (!r.ok) throw new Error(d.error || "Could not load AI settings.");
       if (!active) return;
-      const s = d.settings || {};
       // This dashboard currently exposes Gemini 3.5 Flash-Lite as its supported model.
       setAiProvider("gemini");
       setAiModel("gemini-3.5-flash-lite");

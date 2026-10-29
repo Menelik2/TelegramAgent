@@ -205,7 +205,8 @@ export default function App() {
   const [inboxError, setInboxError] = useState("");
   const [dashboardToken, setDashboardToken] = useState(() => window.sessionStorage.getItem("dashboardApiToken") || "");
   const [aiProvider, setAiProvider] = useState<"gemini" | "openai">("gemini");
-  const [aiModel, setAiModel] = useState("gemini-2.5-flash");
+  const [aiModel, setAiModel] = useState("gemini-3.5-flash-lite");
+  const [aiModelTesting, setAiModelTesting] = useState(false);
   const [aiSettingsLoading, setAiSettingsLoading] = useState(false);
   const apiBase = import.meta.env.VITE_API_BASE_URL || "";
   const apiRequest = (path: string, init: RequestInit = {}) => fetch(`${apiBase}${path}`, { ...init, headers: { ...(init.headers || {}), "x-dashboard-token": dashboardToken } });
@@ -233,7 +234,7 @@ export default function App() {
       if (!active) return;
       const s = d.settings || {};
       setAiProvider(s.provider === "openai" ? "openai" : "gemini");
-      setAiModel(typeof s.model === "string" ? s.model : "gemini-2.5-flash");
+      setAiModel(typeof s.model === "string" ? s.model : "gemini-3.5-flash-lite");
     }).catch(() => { /* defaults remain */ })
       .finally(() => { if (active) setAiSettingsLoading(false); });
     return () => { active = false; };
@@ -344,9 +345,23 @@ export default function App() {
             <div className="integration-row"><div><b>Telegram webhook</b><p>{status?.appBaseUrl || "APP_BASE_URL not set"}</p></div>
               <button className="secondary-button compact" disabled={!dashboardToken} onClick={() => apiRequest("/api/agent/telegram/configure-webhook", { method: "POST" }).then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Failed"); flash(d.message || "Webhook configured."); }).catch(e => flash(e instanceof Error ? e.message : "Webhook failed"))}>Configure webhook</button>
             </div>
-            <div className="integration-row"><div><b>AI model</b><p>{aiSettingsLoading ? "Loading…" : `${aiProvider} / ${aiModel}`}</p></div>
-              <button className="secondary-button compact" disabled={!dashboardToken} onClick={() => apiRequest("/api/agent/ai-settings", {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:aiProvider,model:aiModel,fallbackEnabled:false})}).then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Save failed"); flash("AI model saved."); }).catch(e => flash(e instanceof Error ? e.message : "Save failed"))}>Save model</button>
+            <div className="integration-row ai-model-settings"><div className="ai-model-copy"><b>AI model</b><p>{aiSettingsLoading ? "Loading saved model…" : "Choose the Gemini model used for Telegram replies."}</p>
+              <label className="field-label" htmlFor="ai-model-select">Gemini model</label>
+              <select id="ai-model-select" className="form-control" value={aiModel} onChange={e => { setAiProvider("gemini"); setAiModel(e.target.value); }}>
+                <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite — fast and cost-efficient</option>
+              </select>
+              <p className="helper-text">Automatic model fallback is disabled. Replies use this selected model.</p>
             </div>
+            <div className="ai-model-actions">
+              <button className="secondary-button compact" disabled={!dashboardToken || aiSettingsLoading || aiModelTesting} onClick={() => {
+                setAiModelTesting(true);
+                apiRequest("/api/agent/ai-settings/test", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:"gemini",model:aiModel})})
+                  .then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Model test failed"); flash("Model test passed: " + (d.sample || "connection successful")); })
+                  .catch(e => flash(e instanceof Error ? e.message : "Model test failed"))
+                  .finally(() => setAiModelTesting(false));
+              }}>{aiModelTesting ? "Testing…" : "Test model"}</button>
+              <button className="secondary-button compact" disabled={!dashboardToken || aiSettingsLoading} onClick={() => apiRequest("/api/agent/ai-settings", {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:"gemini",model:aiModel,fallbackEnabled:false})}).then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Save failed"); setAiProvider("gemini"); flash("AI model saved."); }).catch(e => flash(e instanceof Error ? e.message : "Save failed"))}>Save model</button>
+            </div></div>
             <div className="integration-row"><div><b>AI status</b><p>{status?.aiConfigured ? (status.aiProvider || "ready") : "Not configured"}</p></div></div>
           </div>
         </div>

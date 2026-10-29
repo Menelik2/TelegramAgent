@@ -56,7 +56,7 @@ export default function MiniMe({ flash, apiRequest, readJson }: {
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [apiRequest, readJson]);
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.minimeTheme = night ? "night" : "day";

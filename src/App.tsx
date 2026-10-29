@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { isValidTelegramSenderId } from "./telegram-id";
-import { Bot, BrainCircuit, ContactRound, Gauge, Heart, MessageCircle, Pause, Play, Search, Send, Settings2, ShieldCheck, Sparkles, Zap } from "lucide-react";
+import { ArrowLeft, Bot, BrainCircuit, ContactRound, Gauge, Heart, MessageCircle, Pause, Play, Search, Send, Settings2, ShieldCheck, Sparkles, Zap } from "lucide-react";
 
 async function readJson(response: Response): Promise<Record<string, any>> {
   const raw = await response.text();

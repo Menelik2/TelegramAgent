@@ -41,6 +41,9 @@ export default function MiniMe({ flash, apiRequest, readJson }: {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [night, setNight] = useState(false);
+  const [sampleMessage, setSampleMessage] = useState("Hi, can you tell me more about this?");
+  const [testReply, setTestReply] = useState("");
+  const [testing, setTesting] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -86,6 +89,19 @@ export default function MiniMe({ flash, apiRequest, readJson }: {
       flash(error instanceof Error ? error.message : "Could not save MiniMe profile.");
     } finally { setSaving(false); }
   };
+  const testMiniMe = async () => {
+    if (!sampleMessage.trim()) { flash("Enter a sample message first."); return; }
+    setTesting(true); setTestReply("");
+    try {
+      const response = await apiRequest("/api/agent/minime/test", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message: sampleMessage })
+      });
+      const data = await readJson(response);
+      if (!response.ok) throw new Error(data.error || "Could not test MiniMe.");
+      setTestReply(String(data.reply || ""));
+    } catch (error) { flash(error instanceof Error ? error.message : "Could not test MiniMe."); }
+    finally { setTesting(false); }
+  };
   const selectedTraits = profile.personality.map(label => personality.find(item => item.label === label)).filter(Boolean);
   const renderOptions = (items: typeof personality, field: "personality" | "values", max: number) => (
     <div className="minime-options-grid">
@@ -130,6 +146,12 @@ export default function MiniMe({ flash, apiRequest, readJson }: {
       <section className="minime-card"><div className="minime-section-title">VALUES <span>(UP TO 3)</span></div>{renderOptions(values, "values", 3)}</section>
       <section className="minime-card minime-words-card"><label className="minime-section-title" htmlFor="minime-words">IN YOUR WORDS</label><textarea id="minime-words" maxLength={300} value={profile.words} onChange={event => update({ words: event.target.value })} placeholder="Describe how you treat people…"/><div className="minime-field-count">{profile.words.length}/300</div></section>
       <section className="minime-card minime-story-card"><label className="minime-section-title" htmlFor="minime-story">YOUR STORY <span>(OPTIONAL)</span></label><textarea id="minime-story" maxLength={1200} value={profile.story} onChange={event => update({ story: event.target.value })} placeholder={'e.g. "Started selling bags 3 years ago because I couldn’t find good ones in Addis."'} /></section>
+      <section className="minime-card minime-test-card">
+        <div className="minime-section-title">TEST YOUR MINIME <span>(NO MESSAGE SENT)</span></div>
+        <textarea aria-label="Sample incoming message" maxLength={1500} value={sampleMessage} onChange={event => setSampleMessage(event.target.value)} placeholder="Type a message your AI might receive…"/>
+        <button type="button" className="minime-option selected" disabled={testing || loading || !!loadError} onClick={() => void testMiniMe()}>{testing ? "Generating reply…" : "Test AI reply"}</button>
+        {testReply ? <div className="minime-test-reply"><strong>Preview reply</strong><p>{testReply}</p></div> : null}
+      </section>
       <div className="minime-save-area"><button type="button" className="minime-save-button" disabled={loading || !!loadError || saving || !dirty} onClick={() => void save()}>{loading ? "Loading…" : saving ? "Saving…" : dirty ? "Save changes" : "Changes saved"}<span>{dirty ? "" : "✓"}</span></button></div>
     </div>
     <nav className="minime-bottom-nav" aria-label="Main navigation">

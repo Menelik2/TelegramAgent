@@ -298,7 +298,7 @@ export async function saveAiRuntimeSettings(settings: AiRuntimeSettings): Promis
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     if (/does not exist|relation|404|PGRST/i.test(detail) || response.status === 404) {
-      throw new Error("AI settings table is missing. Run migration 20261030000000_ai_model_settings.sql in Supabase SQL Editor.");
+      throw new Error("AI settings table or model constraint is missing/outdated. Run the latest migration in supabase/migrations in Supabase SQL Editor.");
     }
     throw new Error("Could not save AI model settings." + (detail ? " " + detail.slice(0, 120) : ""));
   }

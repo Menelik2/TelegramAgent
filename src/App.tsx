@@ -304,6 +304,24 @@ export default function App() {
       .then(async response => { const data = await readJson(response); if (!response.ok) throw new Error(data.error || "Permission update failed."); setContacts(previous => previous.map(item => item.id === id ? {...item,allowed:enabled}:item)); flash(enabled ? "Contact allowed." : "Contact set to manual-only."); })
       .catch(error => flash(error instanceof Error ? error.message : "Permission update failed."));
   };
+  const clearInboxHistory = async () => {
+    if (!dashboardToken || inboxLoading) return;
+    const confirmed = window.confirm("Clear all message copies stored in this app's database? This will NOT delete messages from Telegram. This action cannot be undone.");
+    if (!confirmed) return;
+    setInboxLoading(true);
+    try {
+      const response = await apiRequest("/api/inbox/history", { method: "DELETE" });
+      const data = await readJson(response);
+      if (!response.ok) throw new Error(data.error || "Could not clear stored inbox history.");
+      setContacts([]);
+      setSelectedId("");
+      setMobileChatOpen(false);
+      setInboxLive(true);
+      flash(`Cleared ${Number(data.deletedCount || 0)} stored message copies. Telegram messages are unchanged.`);
+    } catch (error) {
+      flash(error instanceof Error ? error.message : "Could not clear stored inbox history.");
+    } finally { setInboxLoading(false); }
+  };
   const sendDemo = async () => {
     if (!draft.trim() || !selected || replySending) return;
     setReplySending(true);
@@ -325,7 +343,7 @@ export default function App() {
       <header className="topbar"><div className="crumb">Workspace / <b>{page}</b></div><div className="connection-pill"><span className={"dot " + (status?.telegramConfigured ? "green" : "amber")}></span>{status?.telegramConfigured ? "Telegram connected" : "Telegram not connected"}</div></header>
       <div className="content">
         {page === "Inbox" ? <div className="inbox-page">
-          <div className="page-heading"><div><div className="eyebrow">YOUR CONVERSATIONS</div><h1>Inbox</h1></div><div className="inbox-heading-actions"><button className="secondary-button" onClick={() => void refreshLiveInbox()} disabled={inboxLoading}>{inboxLoading ? "Loading…" : "Refresh"}</button></div></div>
+          <div className="page-heading"><div><div className="eyebrow">YOUR CONVERSATIONS</div><h1>Inbox</h1></div><div className="inbox-heading-actions"><button className="secondary-button" onClick={() => void clearInboxHistory()} disabled={inboxLoading || !dashboardToken} title="Delete saved message copies from this app only">Clear stored history</button><button className="secondary-button" onClick={() => void refreshLiveInbox()} disabled={inboxLoading}>{inboxLoading ? "Loading…" : "Refresh"}</button></div></div>
           <div className="inbox-toolbar"><div className="inbox-count"><b>{filtered.length}</b> <span>conversations</span>{inboxLive ? <span className="live-label"><i/> Live</span> : null}</div><div className="searchbox"><Search size={16}/><input aria-label="Search conversations" placeholder="Search people or usernames…" value={query} onChange={e => setQuery(e.target.value)}/>{query ? <button className="clear-search" onClick={() => setQuery("")} aria-label="Clear search">×</button> : null}</div></div><div className="inbox-layout"><section className={"inbox-list " + (mobileChatOpen ? "mobile-hidden" : "")}>
             <div className="filter-row">
               <button className={inboxFilter === "all" ? "filter-active" : ""} onClick={() => setInboxFilter("all")}>All</button>

@@ -481,6 +481,10 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
   try {
     const preferences = await getPreferences();
     const persona = await getMiniMeProfile().catch(() => DEFAULT_MINIME_PROFILE);
+    if (persona.status === "Away") {
+      await logEvent("minime_away", "MiniMe status is Away; automatic reply skipped.", { updateId, senderId, chatId });
+      return res.json({ ok: true, ignored: true, reason: "MiniMe status is Away" });
+    }
     const memories = preferences.memoryEnabled ? await getEnabledMemories() : [];
     let recentMessages: string[] = [];
     if (isPersistentStoreConfigured()) {

@@ -201,6 +201,7 @@ export default function App() {
   const [liveMetrics, setLiveMetrics] = useState({ messages: 0, replies: 0, review: 0 });
   const [inboxLive, setInboxLive] = useState(false);
   const [inboxLoading, setInboxLoading] = useState(false);
+  const [replySending, setReplySending] = useState(false);
   const [inboxFilter, setInboxFilter] = useState<"all" | "allowed" | "manual">("all");
   const [inboxError, setInboxError] = useState("");
   const [dashboardToken, setDashboardToken] = useState(() => window.sessionStorage.getItem("dashboardApiToken") || "");
@@ -303,13 +304,15 @@ export default function App() {
       .catch(error => flash(error instanceof Error ? error.message : "Permission update failed."));
   };
   const sendDemo = async () => {
-    if (!draft.trim() || !selected) return;
+    if (!draft.trim() || !selected || replySending) return;
+    setReplySending(true);
     try {
       const response = await apiRequest("/api/inbox/" + encodeURIComponent(selected.id) + "/reply", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:draft.trim()})});
       const data = await readJson(response);
       if (!response.ok) throw new Error(data.error || "Telegram reply failed.");
       setDraft(""); flash("Reply sent."); await refreshLiveInbox();
     } catch (error) { flash(error instanceof Error ? error.message : "Telegram reply failed."); }
+    finally { setReplySending(false); }
   };
   return <div className="app-shell">
     <aside className="sidebar">
@@ -322,7 +325,7 @@ export default function App() {
       <div className="content">
         {page === "Inbox" ? <div className="inbox-page">
           <div className="page-heading"><div><div className="eyebrow">YOUR CONVERSATIONS</div><h1>Inbox</h1></div><button className="secondary-button" onClick={() => void refreshLiveInbox()} disabled={inboxLoading}>{inboxLoading ? "Loading…" : "Refresh"}</button></div>
-          <div className="inbox-layout"><section className="inbox-list"><div className="searchbox"><Search size={16}/><input placeholder="Search…" value={query} onChange={e => setQuery(e.target.value)}/></div>
+          <div className="inbox-toolbar"><div className="inbox-count"><b>{filtered.length}</b> <span>conversations</span>{inboxLive ? <span className="live-label"><i/> Live</span> : null}</div><div className="searchbox"><Search size={16}/><input aria-label="Search conversations" placeholder="Search people or usernames…" value={query} onChange={e => setQuery(e.target.value)}/>{query ? <button className="clear-search" onClick={() => setQuery("")} aria-label="Clear search">×</button> : null}</div></div><div className="inbox-layout"><section className="inbox-list">
             <div className="filter-row">
               <button className={inboxFilter === "all" ? "filter-active" : ""} onClick={() => setInboxFilter("all")}>All</button>
               <button className={inboxFilter === "allowed" ? "filter-active" : ""} onClick={() => setInboxFilter("allowed")}>Auto-reply</button>
@@ -330,9 +333,9 @@ export default function App() {
             </div>
             {inboxError ? <p className="helper-text" style={{padding:"8px 16px",color:"#b91c1c"}}>{inboxError}</p> : null}
             {!dashboardToken ? <p className="helper-text" style={{padding:"12px 16px"}}>Enter dashboard token in Settings to load live inbox.</p> : null}
-            {filtered.map(c => <button className={"conversation " + (selectedId === c.id ? "selected" : "")} key={c.id} onClick={() => setSelectedId(c.id)}><div className={"contact-avatar " + c.color}>{c.initials}</div><div className="conversation-copy"><div className="conversation-name"><b>{c.name}</b><time>{c.time}</time></div><p>{c.last}</p></div></button>)}
+            {inboxLoading && contacts.length === 0 ? <div className="inbox-empty"><span className="empty-icon">…</span><b>Loading conversations</b><p>Connecting to your Telegram inbox.</p></div> : null}{!inboxLoading && filtered.length === 0 ? <div className="inbox-empty"><span className="empty-icon"><MessageCircle size={20}/></span><b>{contacts.length ? "No matching conversations" : "Your inbox is empty"}</b><p>{contacts.length ? "Try another name or clear your search." : dashboardToken ? "New Telegram messages will appear here." : "Add your dashboard API token in Settings to load messages."}</p>{query ? <button className="text-link" onClick={() => setQuery("")}>Clear search</button> : null}</div> : null}{filtered.map(c => <button className={"conversation " + (selectedId === c.id ? "selected" : "")} key={c.id} onClick={() => setSelectedId(c.id)}><div className={"contact-avatar " + c.color}>{c.initials}</div><div className="conversation-copy"><div className="conversation-name"><b>{c.name}</b><time>{c.time}</time></div><p>{c.last || "No message text"}</p><div className="conversation-meta"><span className={c.allowed ? "permission-chip enabled" : "permission-chip"}>{c.allowed ? "AI enabled" : "Manual"}</span><span>{c.handle}</span></div></div></button>)}
           </section>
-          {selected ? <section className="chat-panel"><div className="chat-header"><div className={"contact-avatar " + selected.color}>{selected.initials}</div><div className="chat-contact"><b>{selected.name}</b><span>{selected.handle}</span></div><button className="secondary-button compact" onClick={() => toggleContact(selected.id)}>{selected.allowed ? "Pause AI" : "Allow AI"}</button></div><div className="message-stream">{selected.messages.map((m,i) => <div key={i} className={"message-row " + (m.from === "ai" ? "outgoing" : "")}><div className={"bubble " + (m.from === "ai" ? "bubble-ai" : "bubble-them")}>{m.text}<time>{m.time}</time></div></div>)}</div><div className="reply-box"><textarea value={draft} onChange={e => setDraft(e.target.value)} placeholder="Write a reply…" rows={2}/><button className="send-button" onClick={() => void sendDemo()} disabled={!draft.trim()}><Send size={16}/> Send</button></div></section> : <section className="chat-panel"><p className="helper-text" style={{padding:40}}>Select a conversation.</p></section>}
+          {selected ? <section className="chat-panel"><div className="chat-header"><div className={"contact-avatar " + selected.color}>{selected.initials}</div><div className="chat-contact"><b>{selected.name}</b><span>{selected.handle}</span></div><button className={"secondary-button compact " + (selected.allowed ? "pause-ai" : "allow-ai")} onClick={() => toggleContact(selected.id)} disabled={!selected.senderId}>{selected.allowed ? <><Pause size={14}/> Pause AI</> : <><Play size={14}/> Allow AI</>}</button></div><div className="message-stream">{selected.messages.length ? selected.messages.map((m,i) => <div key={i} className={"message-row " + (m.from === "ai" ? "outgoing" : "")}><div className={"bubble " + (m.from === "ai" ? "bubble-ai" : "bubble-them")}>{m.text}<time>{m.time}</time></div></div>) : <div className="message-empty"><MessageCircle size={22}/><b>No messages loaded</b><span>Refresh the inbox to try again.</span></div>}</div><div className="reply-box"><textarea value={draft} onChange={e => setDraft(e.target.value)} placeholder={"Message " + selected.name + "…"} rows={2} disabled={replySending} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendDemo(); } }}/><button className="send-button" onClick={() => void sendDemo()} disabled={!draft.trim() || replySending}><Send size={16}/> {replySending ? "Sending…" : "Send"}</button></div></section> : <section className="chat-panel chat-placeholder"><MessageCircle size={28}/><b>Select a conversation</b><p>Choose someone from your inbox to read messages and reply.</p></section>}
           </div>
         </div> : page === "Settings" ? <div>
           <div className="page-heading"><h1>Settings</h1></div>

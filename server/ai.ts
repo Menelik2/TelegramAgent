@@ -2,7 +2,8 @@ import { getAiRuntimeSettings } from "./store.js";
 
 /**
  * AI providers for Telegram auto-replies.
- * *
+ * Goal: replies should feel like a real person — clear, warm, useful, never chatbot-like.
+ *
  *   AI_PROVIDER=openai   + OPENAI_API_KEY  (+ OPENAI_MODEL=gpt-4o recommended)
  *   AI_PROVIDER=gemini   + GEMINI_API_KEY  (+ GEMINI_MODEL=gemini-3.5-flash-lite)
  */
@@ -13,7 +14,6 @@ type GeminiResponse = {
   candidates?: Array<{ content?: { parts?: Array<{ text?: string }> }; finishReason?: string }>;
   error?: { message?: string; status?: string; code?: number };
 };
-
 
 type OpenAiResponse = {
   choices?: Array<{ message?: { content?: string } }>;
@@ -45,13 +45,22 @@ export class AiQuotaError extends Error {
   }
 }
 
+function detectMessageLanguage(text: string): "Amharic" | "English" | "Mixed" {
+  const t = (text || "").trim();
+  if (!t) return "English";
+  const ethiopic = (t.match(/[\u1200-\u137F]/g) || []).length;
+  const latin = (t.match(/[A-Za-z]/g) || []).length;
+  if (ethiopic > 0 && latin > 8) return "Mixed";
+  if (ethiopic > 0) return "Amharic";
+  return "English";
+}
+
 function sanitizeHumanReply(text: string): string {
   let out = text.trim();
   if ((out.startsWith('"') && out.endsWith('"')) || (out.startsWith("'") && out.endsWith("'"))) {
     out = out.slice(1, -1).trim();
   }
   out = out.replace(/^(Reply|Response|Owner|As the owner|Here'?s (my|a) reply)\s*[:\-]\s*/i, "");
-  // Strip markdown the model sometimes adds
   out = out.replace(/^#{1,6}\s+/gm, "");
   out = out.replace(/\*\*([^*]+)\*\*/g, "$1");
   out = out.replace(/(?<!\w)\*([^*]+)\*(?!\w)/g, "$1");
@@ -59,16 +68,12 @@ function sanitizeHumanReply(text: string): string {
   if (aiLeak.test(out)) {
     return "haha what do you mean 😄";
   }
-  return out.slice(0, 2000);
-}
-
-function detectMessageLanguage(text: string): "English" | "Amharic" | "mixed" {
-  // Ethiopic block covers Amharic Fidel; Latin letters indicate English/Latin-script text.
-  const hasAmharic = /[\u1200-\u137F]/u.test(text);
-  const hasLatin = /[A-Za-z]/.test(text);
-  if (hasAmharic && hasLatin) return "mixed";
-  if (hasAmharic) return "Amharic";
-  return "English";
+  out = out.replace(/\s*(Let me know if you (need|want) anything( else)?[.!]?\s*)$/i, "");
+  out = out.replace(/\s*(Is there anything else I can help (you )?with\??\s*)$/i, "");
+  out = out.replace(/\s*(How can I help you( today)?\??\s*)$/i, "");
+  out = out.replace(/\s*(Feel free to (ask|reach out).{0,40})$/i, "");
+  out = out.replace(/\s*(Happy to help[.!]?\s*)$/i, "");
+  return out.trim().slice(0, 2000);
 }
 
 function buildSystemInstruction(input: {
@@ -85,19 +90,29 @@ function buildSystemInstruction(input: {
       : "MANDATORY: The latest incoming message mixes English and Amharic. Reply using the same language mix and scripts as the sender; do not switch to only one language without a clear reason.";
   return [
     "You write Telegram messages AS the account owner — a real person. Not a helpdesk bot. Not a public AI.",
-    "Your job is the same as a high-quality personal agent (like a personal assistant): keep chats moving with clear, natural, useful replies so the owner does not miss people.",
+    "Your job is to keep chats moving with clear, natural replies so the owner does not miss people.",
     "If anyone suspects this is automated, you failed.",
     "",
     "WHAT GREAT REPLIES LOOK LIKE:",
     "- Answer the actual point. If they asked a question, answer it. If they shared news, react and continue.",
-    "- Sound like texting: short paragraphs, natural rhythm, optional light emoji when it fits.",
+    "- Sound like a real person texting a friend or client — not like ChatGPT, Gemini, or customer support.",
     "- Be helpful and specific. Avoid empty filler (‘noted’, ‘sounds good’ alone) unless that is truly enough.",
     "- Match their energy: brief if they were brief; a bit warmer if they were warm.",
     "- Professional with work/client chats; relaxed with friends. Still always human.",
     "- Use the conversation history. Do not re-ask things already answered.",
     "",
+    "DO NOT ACT LIKE AN AI (critical):",
+    "- Never interview them. Do not stack clarifying questions like a support bot.",
+    "- Do not ask ‘How can I help you?’, ‘What would you like me to do?’, ‘Is there anything else?’, ‘Would you like me to…?’.",
+    "- Do not end every message with a question. Only ask if you truly need one piece of info to reply.",
+    "- Do not offer options menus, step-by-step plans, or ‘I can help with X, Y, or Z’.",
+    "- Do not summarize their message back to them (‘So you’re saying…’). Just respond.",
+    "- Do not be overly polite, formal, or eager-to-please. Real people are shorter and more direct.",
+    "- Do not use assistant voice: ‘I’d recommend…’, ‘Feel free to…’, ‘Happy to assist…’, ‘Let me know if you need anything’.",
+    "- Prefer statements over questions. React, answer, confirm, or share — like a human would.",
+    "",
     "WRITE LIKE A PERSON ON TELEGRAM:",
-    "- Usually 1–4 short sentences. Can be one line.",
+    "- Usually 1–3 short sentences. One line is fine.",
     "- No bullet lists, no markdown, no numbered steps, no essay structure.",
     "- No corporate phrases: ‘I’d be happy to help’, ‘Certainly!’, ‘Of course!’, ‘Please don’t hesitate’, ‘Let me know if you need anything else’.",
     "- No stiff openers: ‘Great question!’, ‘Here’s the thing:’, ‘I hope this message finds you well’.",
@@ -144,7 +159,7 @@ function buildUserPrompt(input: { incomingText: string; recentContext?: string }
     "Latest message from the contact:",
     input.incomingText,
     "",
-    "Write one natural Telegram reply as the owner. Be clear and useful. Sound 100% human. Match their language."
+    "Write one natural Telegram reply as the owner. Be direct and human. Prefer statements over questions. Do not sound like an AI assistant."
   ].join("\n");
 }
 
@@ -168,7 +183,7 @@ async function generateWithOpenAI(input: {
     },
     body: JSON.stringify({
       model,
-      temperature: 0.7,
+      temperature: 0.75,
       max_tokens: maxTokens,
       messages: [
         { role: "system", content: buildSystemInstruction({ ...input, incomingText: input.incomingText }) },
@@ -204,7 +219,6 @@ async function generateWithGemini(input: {
 }, selectedModel?: string): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
-  // Use the selected stable Gemini model, defaulting to cost-efficient Gemini 3.5 Flash-Lite.
   const model = selectedModel || process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
 
   const response = await fetch(
@@ -216,11 +230,10 @@ async function generateWithGemini(input: {
         "x-goog-api-key": apiKey
       },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: buildSystemInstruction(input) }] },
+        systemInstruction: { parts: [{ text: buildSystemInstruction({ ...input, incomingText: input.incomingText }) }] },
         contents: [{ role: "user", parts: [{ text: buildUserPrompt(input) }] }],
-        // Keep generation settings compatible with the selected Gemini 3-series model;
-        // unsupported parameters can cause a 400 response and block webhook replies.
         generationConfig: {
+          temperature: 0.75,
           maxOutputTokens: /long|detailed|natural conversation/i.test(input.replyLength || "") ? 400 : 220
         }
       })
@@ -233,6 +246,7 @@ async function generateWithGemini(input: {
     if (response.status === 429) {
       throw new AiQuotaError(
         `Gemini quota exceeded for model "${model}". ` +
+          `Use GEMINI_MODEL=gemini-3.5-flash-lite or switch AI_PROVIDER=openai. ` +
           (detail ? `Provider detail: ${detail}` : "")
       );
     }
@@ -276,7 +290,6 @@ export async function generateReply(input: {
   try {
     return await runPrimary();
   } catch (error) {
-    // Gemini replies never silently switch models.
     if (provider === "gemini" || settings.fallbackEnabled !== true) throw error;
     const fallbackModel = provider === "openai"
       ? (model === "gpt-4o-mini" ? "gpt-4o" : "gpt-4o-mini")

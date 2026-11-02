@@ -23,12 +23,12 @@ function hour(env: string | undefined, fallback: number): number {
 }
 
 export function getFeatureConfig(): FeatureConfig {
-  const delayMin = Math.max(0, Math.floor(num(process.env.REPLY_DELAY_MS_MIN, 10000)));
-  const delayMaxRaw = Math.max(0, Math.floor(num(process.env.REPLY_DELAY_MS_MAX, 10000)));
-  const delayMax = Math.max(delayMin, delayMaxRaw);
-  const quietStart = hour(process.env.QUIET_HOURS_START, -1);
-  const quietEnd = hour(process.env.QUIET_HOURS_END, -1);
-  // Enable quiet hours only when both 0–23 are explicitly set (use -1 default = off)
+  // Defaults: short human-like pause. Avoid 10s+ defaults — Vercel serverless often times out.
+  const delayMin = Math.max(0, Math.floor(num(process.env.REPLY_DELAY_MS_MIN, 1500)));
+  const delayMaxRaw = Math.max(0, Math.floor(num(process.env.REPLY_DELAY_MS_MAX, 3000)));
+  // Cap at 8s so AI generation + delay still fit typical function limits
+  const delayMax = Math.min(8000, Math.max(delayMin, delayMaxRaw));
+  const delayMinCapped = Math.min(delayMin, delayMax);
   const startEnv = process.env.QUIET_HOURS_START;
   const endEnv = process.env.QUIET_HOURS_END;
   const quietHoursEnabled =
@@ -40,7 +40,7 @@ export function getFeatureConfig(): FeatureConfig {
     Number.isFinite(Number(endEnv));
 
   return {
-    replyDelayMinMs: delayMin,
+    replyDelayMinMs: delayMinCapped,
     replyDelayMaxMs: delayMax,
     quietHoursEnabled,
     quietStartHour: quietHoursEnabled ? hour(startEnv, 22) : 22,
@@ -71,7 +71,7 @@ export function isInQuietHours(cfg: FeatureConfig, now = new Date()): boolean {
   if (!cfg.quietHoursEnabled) return false;
   const h = currentHourInTz(cfg.quietTimezone, now);
   const { quietStartHour: start, quietEndHour: end } = cfg;
-  if (start === end) return true; // full-day quiet if equal
+  if (start === end) return true;
   if (start < end) return h >= start && h < end;
   return h >= start || h < end;
 }

@@ -322,11 +322,12 @@ app.post("/api/agent/emergency-stop", async (_req, res) => {
 });
 app.post("/api/agent/simulate", rateLimit({ name: "simulate", limit: 20, windowMs: 60_000 }), async (req, res) => {
   try {
-    const incomingText = safeText(req.body?.text, 3000);
+    const incomingText = safeText(req.body?.text, 4096);
     if (!incomingText) return res.status(400).json({ ok: false, error: "Enter a message to simulate." });
     const decision = decideReply({ enabled: true, allowedContact: true, text: incomingText, duplicate: false });
     if (!decision.allowed) return res.json({ ok: true, escalated: true, reason: decision.reason });
-    const reply = await generateReply({ incomingText, recentContext: safeText(req.body?.context, 8000), tone: safeText(req.body?.tone, 80), language: safeText(req.body?.language, 80) });
+    const reply = await generateReply({ incomingText, recentContext: safeText(req.body?.context, 8000), tone: safeText(req.body?.tone, 80), language: safeText(req.body?.language, 80), replyLength: safeText(req.body?.replyLength, 40) });
+    if (reply === "[ESCALATE]") return res.json({ ok: true, escalated: true, sent: false, mode: "simulation", reason: "This message needs your personal decision." });
     return res.json({ ok: true, reply, sent: false, mode: "simulation" });
   } catch (error) {
     return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "AI provider unavailable." });
@@ -413,7 +414,7 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
   // contextual prompt instead of silently dropping the conversation; never send raw media metadata to the model.
   const messageText = typeof message.text === "string" ? message.text : typeof message.caption === "string" ? message.caption : "";
   const mediaFallback = message.photo ? "[The contact sent a photo without a caption. Acknowledge it and ask what they would like to know.]" : message.video ? "[The contact sent a video without a caption. Acknowledge it and ask what they would like to know.]" : message.voice || message.audio ? "[The contact sent a voice/audio message. Politely ask them to provide the message as text if you cannot understand it.]" : message.sticker ? "[The contact sent a sticker. Reply briefly and naturally to acknowledge it.]" : message.document ? "[The contact sent a document without a caption. Ask what they would like help with.]" : message.animation ? "[The contact sent a GIF. Acknowledge it naturally.]" : "";
-  const text = safeText(messageText || mediaFallback);
+  const text = safeText(messageText || mediaFallback, 4096);
   if (!senderId || !chatId || !text) {
     await logEvent("ignored", "Message has no supported text or common media payload.", { updateId, senderId, chatId });
     return res.json({ ok: true, ignored: true, reason: "Unsupported message type." });

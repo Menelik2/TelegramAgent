@@ -2,6 +2,8 @@ const supabaseUrl = process.env.SUPABASE_URL?.replace(/\/$/, "");
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const memoryEvents: AgentEvent[] = [];
 const MAX_MEMORY_EVENTS = 500;
+const memoryUpdateIds = new Set<string>();
+const MAX_MEMORY_UPDATE_IDS = 10000;
 
 export type AgentEvent = {
   id?: number;
@@ -33,7 +35,15 @@ async function supabaseRequest(path: string, init: RequestInit = {}): Promise<Re
 
 /** Dedup Telegram updates using public.telegram_updates (requires payload_hash). */
 export async function claimUpdate(updateId: string): Promise<boolean> {
-  if (!isPersistentStoreConfigured()) return true;
+  if (!isPersistentStoreConfigured()) {
+    if (memoryUpdateIds.has(updateId)) return false;
+    memoryUpdateIds.add(updateId);
+    if (memoryUpdateIds.size > MAX_MEMORY_UPDATE_IDS) {
+      const oldest = memoryUpdateIds.values().next().value;
+      if (oldest !== undefined) memoryUpdateIds.delete(oldest);
+    }
+    return true;
+  }
   const response = await supabaseRequest("telegram_updates", {
     method: "POST",
     headers: { Prefer: "return=minimal" },
@@ -52,7 +62,10 @@ export async function claimUpdate(updateId: string): Promise<boolean> {
 }
 
 export async function releaseUpdate(updateId: string): Promise<void> {
-  if (!isPersistentStoreConfigured()) return;
+  if (!isPersistentStoreConfigured()) {
+    memoryUpdateIds.delete(updateId);
+    return;
+  }
   await supabaseRequest(`telegram_updates?update_id=eq.${encodeURIComponent(updateId)}`, {
     method: "DELETE",
     headers: { Prefer: "return=minimal" }

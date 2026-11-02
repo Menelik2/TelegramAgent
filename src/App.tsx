@@ -150,7 +150,7 @@ function PersonalityPanel({ apiRequest, readJson, flash }: { apiRequest: (path: 
         <textarea className="form-control" style={{ minHeight: 64 }} value={simIn} onChange={e => setSimIn(e.target.value)} placeholder="Sample message from a contact" />
         <button className="secondary-button" style={{ marginTop: 12 }} disabled={simBusy || !simIn.trim()} onClick={() => {
           setSimBusy(true); setSimOut("");
-          apiRequest("/api/agent/simulate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: simIn.trim(), tone, language }) })
+          apiRequest("/api/agent/simulate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: simIn.trim(), tone, language, replyLength }) })
             .then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Failed"); setSimOut(d.escalated ? "(Needs owner review) " + (d.reason || "") : (d.reply || "")); })
             .catch(e => flash(e instanceof Error ? e.message : "Simulate failed")).finally(() => setSimBusy(false));
         }}>{simBusy ? "Thinking…" : "Generate test reply"}</button>
@@ -224,7 +224,7 @@ export default function App() {
       return true;
     });
   }, [contacts, query, inboxFilter]);
-  useEffect(() => { fetch(`${apiBase}/api/status`).then(r => readJson(r)).then((value: Status) => { setStatus(value); setAutomation(value.automationEnabled); }).catch(() => setStatus(null)); }, [apiBase]);
+  useEffect(() => { fetch(`${apiBase}/api/status`).then(r => readJson(r)).then(value => { setStatus(value as Status); setAutomation(value.automationEnabled); }).catch(() => setStatus(null)); }, [apiBase]);
   useEffect(() => { if (dashboardToken) window.sessionStorage.setItem("dashboardApiToken", dashboardToken); else window.sessionStorage.removeItem("dashboardApiToken"); }, [dashboardToken]);
   useEffect(() => {
     if (!dashboardToken) return;

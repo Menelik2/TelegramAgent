@@ -56,7 +56,7 @@ export async function deleteMemory(id: number) {
   if (!r.ok) throw new Error('AI memory could not be deleted.');
 }
 export async function getPreferences(): Promise<AgentPreferences> {
-  const fallback: AgentPreferences = { tone: 'concise, calm, professional', language: 'match the sender; English message → English reply; Amharic → Amharic', replyLength: 'concise', memoryEnabled: true };
+  const fallback: AgentPreferences = { tone: 'warm, attentive, naturally affectionate when welcome, playful when appropriate', language: 'match the sender; English message → English reply; Amharic → Amharic', replyLength: 'concise', memoryEnabled: true };
   if (!configured()) return fallback;
   const r = await request('agent_preferences?select=tone,language,reply_length,memory_enabled&id=eq.1&limit=1');
   if (!r.ok) throw new Error('Agent preferences could not be loaded.');

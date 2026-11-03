@@ -23,12 +23,12 @@ function hour(env: string | undefined, fallback: number): number {
 }
 
 export function getFeatureConfig(): FeatureConfig {
-  // Defaults: short human-like pause. Avoid 10s+ defaults — Vercel serverless often times out.
-  const delayMin = Math.max(0, Math.floor(num(process.env.REPLY_DELAY_MS_MIN, 1500)));
-  const delayMaxRaw = Math.max(0, Math.floor(num(process.env.REPLY_DELAY_MS_MAX, 3000)));
-  // Cap at 8s so AI generation + delay still fit typical function limits
-  const delayMax = Math.min(8000, Math.max(delayMin, delayMaxRaw));
-  const delayMinCapped = Math.min(delayMin, delayMax);
+  // Default to the requested fixed 10-second pause before generating replies.
+  // Vercel function duration must accommodate this delay plus AI and Telegram API calls.
+  const delayMin = Math.min(30000, Math.max(0, Math.floor(num(process.env.REPLY_DELAY_MS_MIN, 10000))));
+  const delayMaxRaw = Math.min(30000, Math.max(0, Math.floor(num(process.env.REPLY_DELAY_MS_MAX, 10000))));
+  const delayMax = Math.max(delayMin, delayMaxRaw);
+  const delayMinCapped = delayMin;
   const startEnv = process.env.QUIET_HOURS_START;
   const endEnv = process.env.QUIET_HOURS_END;
   const quietHoursEnabled =

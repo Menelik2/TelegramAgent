@@ -22,3 +22,11 @@ export function stripBotMention(text: string, username: string): string {
   const escaped = username.replace(/^@/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return text.replace(new RegExp("@" + escaped + "\\b", "gi"), "").trim();
 }
+
+/** Storage namespace for one sender in one group. Never use this as Telegram chat_id. */
+export function groupSenderScope(groupChatId: string, senderId: string): string {
+  if (!/^-?[0-9]{1,22}$/.test(groupChatId) || !/^[0-9]{1,22}$/.test(senderId)) {
+    throw new Error("Invalid group chat or sender ID.");
+  }
+  return "group:" + groupChatId + ":user:" + senderId;
+}

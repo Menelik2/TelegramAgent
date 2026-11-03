@@ -334,7 +334,7 @@ export default function App() {
     if (!confirmed) return;
     setInboxLoading(true);
     try {
-      const response = await apiRequest("/api/inbox/history", { method: "DELETE" });
+      const response = await apiRequest("/api/inbox/history", { method: "DELETE", headers: { "x-confirm-inbox-cleanup": "DELETE_STORED_COPIES_ONLY" } });
       const data = await readJson(response);
       if (!response.ok) throw new Error(data.error || "Could not clear stored inbox history.");
       setContacts([]);

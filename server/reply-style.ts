@@ -30,7 +30,7 @@ export function buildSystemInstruction(input: ReplyInput): string {
     "- Use history for short follow-ups ('why?', 'and then?', emoji-only). Do not re-ask what was already answered.",
     "- If one detail is missing, answer what you can and ask at most one focused question — prefer statements over interview-style questions.",
     "",
-    "CONVERSATIONAL STYLE:
+    "CONVERSATIONAL STYLE:",
     "- No helpdesk voice: 'How can I help?', 'Is there anything else?', 'I’d be happy to…', 'Feel free to…', 'Let me know if you need anything'.",
     "- No stacked clarifying questions. No option menus. No 'So you’re saying…'.",
     "- Prefer statements, reactions, answers, and soft check-ins over interrogating.",

@@ -246,7 +246,11 @@ app.get("/api/inbox", requireDashboardAuth, async (_req, res) => {
   try { return res.json({ ok: true, persistent: isPersistentStoreConfigured(), conversations: await listInbox() }); }
   catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Live inbox unavailable." }); }
 });
-app.delete("/api/inbox/history", requireDashboardAuth, async (_req, res) => {
+app.delete("/api/inbox/history", requireDashboardAuth, async (req, res) => {
+  // Require an explicit second confirmation even for authenticated dashboard users.
+  if (req.header("x-confirm-inbox-cleanup") !== "DELETE_STORED_COPIES_ONLY") {
+    return res.status(400).json({ ok: false, error: "Explicit confirmation required to clear stored inbox history." });
+  }
   try {
     const deletedCount = await clearStoredInboxHistory();
     await logEvent("inbox_history_cleared", `Owner cleared ${deletedCount} stored inbox message copies; Telegram messages were not changed.`);

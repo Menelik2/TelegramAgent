@@ -180,14 +180,14 @@ function mapMessageRow(row: Record<string, unknown>): AgentMessage {
 export async function listConversationMessages(chatId: string): Promise<AgentMessage[]> {
   if (!isPersistentStoreConfigured()) return [];
   const response = await supabaseRequest(
-    `agent_messages?select=id,update_id,telegram_message_id,business_connection_id,chat_id,sender_id,sender_name,username,direction,message_text,created_at&chat_id=eq.${encodeURIComponent(chatId)}&order=created_at.asc&limit=200`
+    `agent_messages?select=id,update_id,telegram_message_id,business_connection_id,chat_id,sender_id,sender_name,username,direction,message_text,created_at&chat_id=eq.${encodeURIComponent(chatId)}&order=created_at.desc&limit=500`
   );
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     throw new Error(`Supabase conversation read failed (${response.status})${detail ? ": " + detail.slice(0, 180) : ""}`);
   }
   const rows = await response.json() as Array<Record<string, unknown>>;
-  return rows.map(mapMessageRow);
+  return rows.reverse().map(mapMessageRow);
 }
 
 /** Permanently remove only the dashboard's stored message copies. This never calls Telegram. */

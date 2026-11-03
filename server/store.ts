@@ -125,6 +125,7 @@ export type AgentMessage = {
 };
 
 export type InboxConversation = {
+  conversationId: string;
   chatId: string;
   businessConnectionId: string;
   senderId: string;
@@ -135,6 +136,20 @@ export type InboxConversation = {
   lastDirection: "incoming" | "outgoing";
   messageCount: number;
 };
+
+/** Stable, collision-free identifier for one Telegram destination and business connection. */
+export function conversationId(connectionId: string, chatId: string): string {
+  return encodeURIComponent(connectionId) + "~" + encodeURIComponent(chatId);
+}
+export function parseConversationId(value: string): { connectionId: string; chatId: string } | null {
+  const index = value.indexOf("~");
+  if (index < 1) return /^-?[0-9]{1,22}$/.test(value) ? { connectionId: "direct", chatId: value } : null;
+  try {
+    const connectionId = decodeURIComponent(value.slice(0, index));
+    const chatId = decodeURIComponent(value.slice(index + 1));
+    return connectionId && /^-?[0-9]{1,22}$/.test(chatId) ? { connectionId, chatId } : null;
+  } catch { return null; }
+}
 
 export async function recordMessage(message: AgentMessage): Promise<void> {
   if (!isPersistentStoreConfigured()) return;
@@ -177,12 +192,12 @@ function mapMessageRow(row: Record<string, unknown>): AgentMessage {
   };
 }
 
-export async function listConversationMessages(chatId: string, offset = 0, limit = 100): Promise<AgentMessage[]> {
+export async function listConversationMessages(chatId: string, offset = 0, limit = 100, connectionId?: string): Promise<AgentMessage[]> {
   if (!isPersistentStoreConfigured()) return [];
   const safeOffset = Math.max(0, Math.floor(offset));
   const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
   const response = await supabaseRequest(
-    `agent_messages?select=id,update_id,telegram_message_id,business_connection_id,chat_id,sender_id,sender_name,username,direction,message_text,created_at&chat_id=eq.${encodeURIComponent(chatId)}&order=created_at.desc&limit=${safeLimit}&offset=${safeOffset}`
+    `agent_messages?select=id,update_id,telegram_message_id,business_connection_id,chat_id,sender_id,sender_name,username,direction,message_text,created_at&chat_id=eq.${encodeURIComponent(chatId)}${connectionId ? "&business_connection_id=eq." + encodeURIComponent(connectionId) : ""}&order=created_at.desc&limit=${safeLimit}&offset=${safeOffset}`
   );
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
@@ -222,11 +237,14 @@ export async function listInbox(): Promise<InboxConversation[]> {
     const chatId = String(row.chat_id || "");
     if (!chatId) continue;
     const text = String(row.message_text ?? row.text ?? "");
-    const existing = byChat.get(chatId);
+    const connectionId = String(row.business_connection_id || "direct");
+    const scopedId = conversationId(connectionId, chatId);
+    const existing = byChat.get(scopedId);
     if (!existing) {
-      byChat.set(chatId, {
+      byChat.set(scopedId, {
+        conversationId: scopedId,
         chatId,
-        businessConnectionId: String(row.business_connection_id || "direct"),
+        businessConnectionId: connectionId,
         senderId: String(row.sender_id || ""),
         senderName: String(row.sender_name || row.username || chatId),
         username: String(row.username || ""),

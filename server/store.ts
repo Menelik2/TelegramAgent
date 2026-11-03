@@ -352,3 +352,24 @@ export async function saveAiRuntimeSettings(settings: AiRuntimeSettings): Promis
   }
   return { ...settings, updatedAt: new Date().toISOString() };
 }
+
+/** Additional dashboard-managed owners. Environment owners are never modified. */
+export async function listDashboardOwnerIds(): Promise<string[]> {
+  const response = await supabaseRequest("agent_owner_ids?select=user_id&order=created_at.asc&limit=500");
+  if (!response.ok) throw new Error("Could not load owner IDs. Apply migration 20261103000000_agent_owner_ids.sql.");
+  const rows = await response.json() as Array<{ user_id: string }>;
+  return rows.map(row => String(row.user_id));
+}
+export async function addDashboardOwnerId(userId: string): Promise<void> {
+  const response = await supabaseRequest("agent_owner_ids", {
+    method: "POST", headers: { Prefer: "resolution=ignore-duplicates,return=minimal" },
+    body: JSON.stringify({ user_id: userId })
+  });
+  if (!response.ok) throw new Error("Could not add owner ID.");
+}
+export async function removeDashboardOwnerId(userId: string): Promise<void> {
+  const response = await supabaseRequest("agent_owner_ids?user_id=eq." + encodeURIComponent(userId), {
+    method: "DELETE", headers: { Prefer: "return=minimal" }
+  });
+  if (!response.ok) throw new Error("Could not remove owner ID.");
+}

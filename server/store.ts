@@ -177,10 +177,12 @@ function mapMessageRow(row: Record<string, unknown>): AgentMessage {
   };
 }
 
-export async function listConversationMessages(chatId: string): Promise<AgentMessage[]> {
+export async function listConversationMessages(chatId: string, offset = 0, limit = 100): Promise<AgentMessage[]> {
   if (!isPersistentStoreConfigured()) return [];
+  const safeOffset = Math.max(0, Math.floor(offset));
+  const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
   const response = await supabaseRequest(
-    `agent_messages?select=id,update_id,telegram_message_id,business_connection_id,chat_id,sender_id,sender_name,username,direction,message_text,created_at&chat_id=eq.${encodeURIComponent(chatId)}&order=created_at.desc&limit=500`
+    `agent_messages?select=id,update_id,telegram_message_id,business_connection_id,chat_id,sender_id,sender_name,username,direction,message_text,created_at&chat_id=eq.${encodeURIComponent(chatId)}&order=created_at.desc&limit=${safeLimit}&offset=${safeOffset}`
   );
   if (!response.ok) {
     const detail = await response.text().catch(() => "");

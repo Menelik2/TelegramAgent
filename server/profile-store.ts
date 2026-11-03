@@ -74,3 +74,25 @@ export async function getEnabledMemories(): Promise<string[]> {
   return (await r.json() as any[]).map(x => String(x.memory).slice(0, 1000));
 }
 
+
+/** The environment variable seeds the list until the owner saves dashboard settings. */
+export function environmentOwnerIds(): string[] {
+  return [...new Set((process.env.TELEGRAM_OWNER_USER_IDS || "").split(/[\s,;]+/).map(s => s.trim()).filter(s => /^[1-9]\d{0,19}$/.test(s)))];
+}
+export async function getOwnerUserIds(): Promise<string[]> {
+  const fallback = environmentOwnerIds();
+  if (!configured()) return fallback;
+  const r = await request('agent_owner_settings?select=owner_user_ids&id=eq.1&limit=1');
+  if (!r.ok) throw new Error('Owner settings unavailable. Apply migration 20261103000000_owner_settings.sql.');
+  const rows = await r.json() as Array<{owner_user_ids?: string[]}>;
+  return rows.length ? (rows[0].owner_user_ids || []) : fallback;
+}
+export async function saveOwnerUserIds(ids: string[]): Promise<void> {
+  if (!configured()) throw new Error('Supabase must be configured to save owner IDs.');
+  const r = await request('agent_owner_settings?on_conflict=id', {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify({ id: 1, owner_user_ids: ids, updated_at: new Date().toISOString() })
+  });
+  if (!r.ok) throw new Error('Owner IDs could not be saved. Apply the owner settings migration.');
+}

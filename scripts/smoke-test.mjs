@@ -20,6 +20,8 @@ await check("Webhook rejects missing secret", "/api/telegram/webhook", {
 
 // These routes must stay protected even if their handlers don't declare auth individually.
 await check("Agent settings reject missing dashboard token", "/api/agent/settings", {}, protectedFailure);
+await check("Owner list rejects missing dashboard token", "/api/agent/owner-ids", {}, protectedFailure);
+await check("Owner changes reject missing dashboard token", "/api/agent/owner-ids", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ ownerIds: ["123456789"] }) }, protectedFailure);
 await check("Pause route rejects missing dashboard token", "/api/agent/pause", { method: "POST" }, protectedFailure);
 await check("AI model test rejects missing dashboard token", "/api/agent/ai-settings/test", {
   method: "POST", headers: { "content-type": "application/json" },
@@ -29,6 +31,7 @@ await check("AI model test rejects missing dashboard token", "/api/agent/ai-sett
 if (token) {
   const headers = { "x-dashboard-token": token };
   await check("Dashboard auth", "/api/agent/settings", { headers }, (r, b) => r.ok && b.mode === "explicit-allowlist");
+  await check("Multi-owner settings endpoint", "/api/agent/owner-ids", { headers }, (r, b) => r.ok && Array.isArray(b.ownerIds));
   await check("Live inbox endpoint", "/api/inbox", { headers }, (r, b) => r.ok && Array.isArray(b.conversations));
   await check("Activity endpoint", "/api/activity?limit=5", { headers }, (r, b) => r.ok && Array.isArray(b.events));
 } else {

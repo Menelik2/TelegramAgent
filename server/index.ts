@@ -3,7 +3,7 @@ import express from "express";
 import cors from "cors";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { decideReply, safeText } from "./policy.js";
-import { isGroupAddressedToBot, stripBotMention } from "./telegram-routing.js";
+import { groupSenderScope, isGroupAddressedToBot, stripBotMention } from "./telegram-routing.js";
 import { rateLimit } from "./rate-limit.js";
 import { generateReply, isAiConfigured, AiQuotaError, getAiProviderLabel } from "./ai.js";
 import { getFeatureConfig, isInQuietHours, pickReplyDelayMs, sleep, isSameLocalDay, featureStatusSummary } from "./features.js";
@@ -457,7 +457,7 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
   const chatId = String(message.chat?.id ?? "");
   // A group conversation is scoped to the addressed sender, not everyone in the group.
   // Keep the real group chat ID for Telegram delivery; the connection ID is storage-only.
-  if (mode === "group" && senderId) businessConnectionId = "group:" + chatId + ":user:" + senderId;
+  if (mode === "group" && senderId) businessConnectionId = groupSenderScope(chatId, senderId);
   // Text and captions can be replied to directly. For common media-only messages, provide a short
   // contextual prompt instead of silently dropping the conversation; never send raw media metadata to the model.
   const messageText = typeof message.text === "string" ? message.text : typeof message.caption === "string" ? message.caption : "";

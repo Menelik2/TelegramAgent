@@ -205,6 +205,9 @@ export default function App() {
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const [inboxFilter, setInboxFilter] = useState<"all" | "allowed" | "manual">("all");
   const [inboxError, setInboxError] = useState("");
+  const [historyOffset, setHistoryOffset] = useState(0);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [dashboardToken, setDashboardToken] = useState(() => window.sessionStorage.getItem("dashboardApiToken") || "");
   const [aiProvider, setAiProvider] = useState<"gemini" | "openai">("gemini");
   const [aiModel, setAiModel] = useState("gemini-3.5-flash-lite");
@@ -288,14 +291,35 @@ export default function App() {
   useEffect(() => {
     if (page !== "Inbox" || !inboxLive || !selectedId || !dashboardToken) return;
     let active = true;
-    apiRequest("/api/inbox/" + encodeURIComponent(selectedId) + "/messages").then(async response => {
+    setHistoryOffset(0); setHistoryHasMore(false);
+    apiRequest("/api/inbox/" + encodeURIComponent(selectedId) + "/messages?limit=100&offset=0").then(async response => {
       const data = await readJson(response);
       if (!response.ok) throw new Error(data.error || "Could not load conversation.");
       if (!active) return;
+      setHistoryOffset((data.messages || []).length); setHistoryHasMore(Boolean(data.hasMore));
       setContacts(previous => previous.map(contact => contact.id === selectedId ? { ...contact, messages: (data.messages || []).map((m: {direction:string;text:string;createdAt?:string}) => ({ from: m.direction === "outgoing" ? "ai" as const : "them" as const, text: m.text, time: m.createdAt ? new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) : "" })) } : contact));
     }).catch(error => { if (active) flash(error instanceof Error ? error.message : "Could not load conversation."); });
     return () => { active = false; };
   }, [page, inboxLive, selectedId, dashboardToken]);
+  const loadOlderMessages = async () => {
+    if (!selectedId || historyLoading || !historyHasMore) return;
+    const chatId = selectedId;
+    setHistoryLoading(true);
+    try {
+      const response = await apiRequest("/api/inbox/" + encodeURIComponent(chatId) + "/messages?limit=100&offset=" + historyOffset);
+      const data = await readJson(response);
+      if (!response.ok) throw new Error(data.error || "Could not load older messages.");
+      const older = (data.messages || []).map((m: {direction:string;text:string;createdAt?:string}) => ({
+        from: m.direction === "outgoing" ? "ai" as const : "them" as const,
+        text: m.text,
+        time: m.createdAt ? new Date(m.createdAt).toLocaleString() : ""
+      }));
+      setContacts(previous => previous.map(contact => contact.id === chatId ? {...contact, messages: [...older, ...contact.messages]} : contact));
+      setHistoryOffset(Number(data.nextOffset || historyOffset + older.length));
+      setHistoryHasMore(Boolean(data.hasMore));
+    } catch (error) { flash(error instanceof Error ? error.message : "Could not load older messages."); }
+    finally { setHistoryLoading(false); }
+  };
   const toggleContact = (id: string) => {
     const contact = contacts.find(item => item.id === id);
     if (!contact?.senderId) return;
@@ -354,7 +378,7 @@ export default function App() {
             {!dashboardToken ? <p className="helper-text" style={{padding:"12px 16px"}}>Enter dashboard token in Settings to load live inbox.</p> : null}
             {inboxLoading && contacts.length === 0 ? <div className="inbox-empty"><span className="empty-icon">…</span><b>Loading conversations</b><p>Connecting to your Telegram inbox.</p></div> : null}{!inboxLoading && filtered.length === 0 ? <div className="inbox-empty"><span className="empty-icon"><MessageCircle size={20}/></span><b>{contacts.length ? "No matching conversations" : "Your inbox is empty"}</b><p>{contacts.length ? "Try another name or clear your search." : dashboardToken ? "New Telegram messages will appear here." : "Add your dashboard API token in Settings to load messages."}</p>{query ? <button className="text-link" onClick={() => setQuery("")}>Clear search</button> : null}</div> : null}{filtered.map(c => <button className={"conversation " + (selectedId === c.id ? "selected" : "")} key={c.id} onClick={() => { setSelectedId(c.id); setMobileChatOpen(true); }}><div className={"contact-avatar " + c.color}>{c.initials}</div><div className="conversation-copy"><div className="conversation-name"><b>{c.name}</b><time>{c.time}</time></div><p>{c.last || "No message text"}</p><div className="conversation-meta"><span className={c.allowed ? "permission-chip enabled" : "permission-chip"}>{c.allowed ? "AI enabled" : "Manual"}</span><span>{c.handle}</span></div></div></button>)}
           </section>
-          {selected ? <section className={"chat-panel " + (mobileChatOpen ? "mobile-chat-active" : "")}><div className="chat-header"><button className="mobile-back-button" onClick={() => setMobileChatOpen(false)} aria-label="Back to conversations"><ArrowLeft size={18}/></button><div className={"contact-avatar " + selected.color}>{selected.initials}</div><div className="chat-contact"><b>{selected.name}</b><span>{selected.handle}</span></div><button className={"secondary-button compact " + (selected.allowed ? "pause-ai" : "allow-ai")} onClick={() => toggleContact(selected.id)} disabled={!selected.senderId}>{selected.allowed ? <><Pause size={14}/> Pause AI</> : <><Play size={14}/> Allow AI</>}</button></div><div className="message-stream">{selected.messages.length ? selected.messages.map((m,i) => <div key={i} className={"message-row " + (m.from === "ai" ? "outgoing" : "")}><div className={"bubble " + (m.from === "ai" ? "bubble-ai" : "bubble-them")}>{m.text}<time>{m.time}</time></div></div>) : <div className="message-empty"><MessageCircle size={22}/><b>No messages loaded</b><span>Refresh the inbox to try again.</span></div>}</div><div className="reply-box"><textarea value={draft} onChange={e => setDraft(e.target.value)} placeholder={"Message " + selected.name + "…"} rows={2} disabled={replySending} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendDemo(); } }}/><button className="send-button" onClick={() => void sendDemo()} disabled={!draft.trim() || replySending}><Send size={16}/> {replySending ? "Sending…" : "Send"}</button></div></section> : <section className={"chat-panel chat-placeholder " + (mobileChatOpen ? "mobile-chat-active" : "")}><MessageCircle size={28}/><b>Select a conversation</b><p>Choose someone from your inbox to read messages and reply.</p></section>}
+          {selected ? <section className={"chat-panel " + (mobileChatOpen ? "mobile-chat-active" : "")}><div className="chat-header"><button className="mobile-back-button" onClick={() => setMobileChatOpen(false)} aria-label="Back to conversations"><ArrowLeft size={18}/></button><div className={"contact-avatar " + selected.color}>{selected.initials}</div><div className="chat-contact"><b>{selected.name}</b><span>{selected.handle}</span></div><button className={"secondary-button compact " + (selected.allowed ? "pause-ai" : "allow-ai")} onClick={() => toggleContact(selected.id)} disabled={!selected.senderId}>{selected.allowed ? <><Pause size={14}/> Pause AI</> : <><Play size={14}/> Allow AI</>}</button></div><div className="message-stream">{historyHasMore ? <button className="secondary-button compact history-load-button" disabled={historyLoading} onClick={() => void loadOlderMessages()}>{historyLoading ? "Loading older messages…" : "Load older messages"}</button> : null}{selected.messages.length ? selected.messages.map((m,i) => <div key={i} className={"message-row " + (m.from === "ai" ? "outgoing" : "")}><div className={"bubble " + (m.from === "ai" ? "bubble-ai" : "bubble-them")}>{m.text}<time>{m.time}</time></div></div>) : <div className="message-empty"><MessageCircle size={22}/><b>No messages loaded</b><span>Refresh the inbox to try again.</span></div>}</div><div className="reply-box"><textarea value={draft} onChange={e => setDraft(e.target.value)} placeholder={"Message " + selected.name + "…"} rows={2} disabled={replySending} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendDemo(); } }}/><button className="send-button" onClick={() => void sendDemo()} disabled={!draft.trim() || replySending}><Send size={16}/> {replySending ? "Sending…" : "Send"}</button></div></section> : <section className={"chat-panel chat-placeholder " + (mobileChatOpen ? "mobile-chat-active" : "")}><MessageCircle size={28}/><b>Select a conversation</b><p>Choose someone from your inbox to read messages and reply.</p></section>}
           </div>
         </div> : page === "Settings" ? <div>
           <div className="page-heading"><h1>Settings</h1></div>

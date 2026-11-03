@@ -3,10 +3,11 @@ import express from "express";
 import cors from "cors";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { decideReply, safeText } from "./policy.js";
+import { isGroupAddressedToBot, stripBotMention } from "./telegram-routing.js";
 import { rateLimit } from "./rate-limit.js";
 import { generateReply, isAiConfigured, AiQuotaError, getAiProviderLabel } from "./ai.js";
 import { getFeatureConfig, isInQuietHours, pickReplyDelayMs, sleep, isSameLocalDay, featureStatusSummary } from "./features.js";
-import { claimUpdate, clearStoredInboxHistory, getLastActivityAt, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate, getAiRuntimeSettings, saveAiRuntimeSettings } from "./store.js";
+import { claimUpdate, clearStoredInboxHistory, getLastActivityAt, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate, getAiRuntimeSettings, saveAiRuntimeSettings, parseConversationId } from "./store.js";
 import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getPreferences, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setAutomationEnabled, setContact } from "./profile-store.js";
 
 const app = express();
@@ -18,6 +19,17 @@ const port = Number(process.env.PORT || 8787);
 const allowlist = new Set((process.env.TELEGRAM_ALLOWED_USER_IDS || "").split(",").map(s => s.trim()).filter(Boolean));
 const ownerUserIds = new Set((process.env.TELEGRAM_OWNER_USER_IDS || "").split(",").map(s => s.trim()).filter(Boolean));
 const businessOwnerByConnection = new Map<string, string>();
+const allowedGroupIds = new Set((process.env.TELEGRAM_ALLOWED_GROUP_IDS || "").split(",").map(v => v.trim()).filter(Boolean));
+const botUsername = (process.env.TELEGRAM_BOT_USERNAME || "yeniagentbot").replace(/^@/, "").toLowerCase();
+const botId = (process.env.TELEGRAM_BOT_ID || "").trim();
+async function authorizedBusinessConnection(connectionId: string): Promise<boolean> {
+  if (!connectionId || !process.env.TELEGRAM_BOT_TOKEN || ownerUserIds.size === 0) return false;
+  const response = await fetch("https://api.telegram.org/bot" + process.env.TELEGRAM_BOT_TOKEN + "/getBusinessConnection", {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ business_connection_id: connectionId })
+  });
+  const body = await response.json() as { ok?: boolean; result?: { is_enabled?: boolean; user?: { id?: number } } };
+  return Boolean(response.ok && body.ok && body.result?.is_enabled && ownerUserIds.has(String(body.result?.user?.id || "")));
+}
 let automationEnabled = false;
 let lastWebhookAt: string | null = null;
 
@@ -253,16 +265,20 @@ app.get("/api/inbox/:chatId/messages", requireDashboardAuth, async (req, res) =>
   catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Conversation history unavailable." }); }
 });
 app.post("/api/inbox/:chatId/reply", rateLimit({ name: "manual-reply", limit: 30, windowMs: 60_000 }), requireDashboardAuth, async (req, res) => {
-  const chatId = String(req.params.chatId || "");
+  const target = parseConversationId(String(req.params.chatId || ""));
   const text = safeText(req.body?.text, 4096);
-  if (!/^-?[0-9]{1,22}$/.test(chatId)) return res.status(400).json({ ok: false, error: "Invalid Telegram chat ID." });
+  if (!target) return res.status(400).json({ ok: false, error: "Invalid conversation ID." });
+  const { chatId } = target;
   if (!text) return res.status(400).json({ ok: false, error: "Enter a reply." });
   if (!process.env.TELEGRAM_BOT_TOKEN) return res.status(503).json({ ok: false, error: "Telegram bot token is not configured." });
   try {
-    const conversation = (await listInbox()).find(item => item.chatId === chatId);
+    const conversation = (await listInbox()).find(item => item.chatId === chatId && item.businessConnectionId === target.connectionId);
     if (!conversation) return res.status(404).json({ ok: false, error: "Conversation not found in the live inbox." });
     const manualPayload: Record<string, unknown> = { chat_id: chatId, text };
-    if (conversation.businessConnectionId && conversation.businessConnectionId !== "direct") {
+    if (conversation.businessConnectionId.startsWith("group:")) {
+      if (!allowedGroupIds.has(chatId)) return res.status(403).json({ ok: false, error: "Group is not authorized." });
+    } else if (conversation.businessConnectionId !== "direct") {
+      if (!(await authorizedBusinessConnection(conversation.businessConnectionId))) return res.status(403).json({ ok: false, error: "Business connection is not authorized." });
       manualPayload.business_connection_id = conversation.businessConnectionId;
     }
     const apiResponse = await fetch("https://api.telegram.org/bot" + process.env.TELEGRAM_BOT_TOKEN + "/sendMessage", {
@@ -373,10 +389,7 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
   if (connection) {
     const connId = String(connection.id || "");
     const ownerId = String(connection.user?.id || connection.user_id || "");
-    if (connId && ownerId) {
-      businessOwnerByConnection.set(connId, ownerId);
-      ownerUserIds.add(ownerId);
-    }
+    if (connId && ownerId && ownerUserIds.has(ownerId) && connection.is_enabled) businessOwnerByConnection.set(connId, ownerId);
     await logEvent("business_connection", connection.is_enabled ? "Business connection enabled." : "Business connection disabled.", { updateId, senderId: ownerId || undefined });
     return res.json({ ok: true, connectionReceived: true, enabled: Boolean(connection.is_enabled) });
   }
@@ -388,7 +401,7 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
   const editedDirectMessage = update.edited_message;
   let message: any = null;
   let businessConnectionId = "";
-  let mode: "business" | "direct" = "business";
+  let mode: "business" | "direct" | "group" = "business";
   if (businessMessage && !businessMessage.from?.is_bot && businessMessage.business_connection_id) {
     message = businessMessage;
     businessConnectionId = String(businessMessage.business_connection_id);
@@ -398,6 +411,10 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
     message = editedBusinessMessage;
     businessConnectionId = String(editedBusinessMessage.business_connection_id);
     mode = "business";
+  } else if (directMessage && !directMessage.from?.is_bot && ["group", "supergroup"].includes(String(directMessage.chat?.type || ""))) {
+    message = directMessage;
+    businessConnectionId = "group:" + String(directMessage.chat.id);
+    mode = "group";
   } else if (directMessage && !directMessage.from?.is_bot && directMessage.chat?.type === "private" && !directMessage.via_bot) {
     message = directMessage;
     businessConnectionId = "direct";
@@ -411,13 +428,34 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
     await logEvent("ignored", "Unsupported Telegram update ignored (type: " + updateType + ").", { updateId });
     return res.json({ ok: true, ignored: true, updateType });
   }
+  if (mode === "group") {
+    const groupId = String(message.chat?.id || "");
+    if (!allowedGroupIds.has(groupId)) {
+      await logEvent("blocked", "Group is not on the allowed group list.", { updateId, chatId: groupId });
+      return res.json({ ok: true, ignored: true, reason: "Group not authorized" });
+    }
+    if (!isGroupAddressedToBot(message, botUsername, botId || undefined)) {
+      // Normal group traffic must never be recorded or sent to the model.
+      return res.json({ ok: true, ignored: true, reason: "Not addressed to bot" });
+    }
+  } else if (mode === "business") {
+    try {
+      if (!(await authorizedBusinessConnection(businessConnectionId))) {
+        await logEvent("blocked", "Telegram Business connection is not authorized or enabled.", { updateId });
+        return res.json({ ok: true, ignored: true, reason: "Business connection not authorized" });
+      }
+    } catch {
+      await releaseUpdate(updateId).catch(() => undefined);
+      return res.status(503).json({ ok: false, error: "Could not verify Telegram Business connection." });
+    }
+  }
   const senderId = String(message.from?.id ?? "");
   const chatId = String(message.chat?.id ?? "");
   // Text and captions can be replied to directly. For common media-only messages, provide a short
   // contextual prompt instead of silently dropping the conversation; never send raw media metadata to the model.
   const messageText = typeof message.text === "string" ? message.text : typeof message.caption === "string" ? message.caption : "";
   const mediaFallback = message.photo ? "[The contact sent a photo without a caption. Acknowledge it and ask what they would like to know.]" : message.video ? "[The contact sent a video without a caption. Acknowledge it and ask what they would like to know.]" : message.voice || message.audio ? "[The contact sent a voice/audio message. Politely ask them to provide the message as text if you cannot understand it.]" : message.sticker ? "[The contact sent a sticker. Reply briefly and naturally to acknowledge it.]" : message.document ? "[The contact sent a document without a caption. Ask what they would like help with.]" : message.animation ? "[The contact sent a GIF. Acknowledge it naturally.]" : "";
-  const text = safeText(messageText || mediaFallback, 4096);
+  const text = safeText(mode === "group" ? stripBotMention(messageText || mediaFallback, botUsername) || "[The user mentioned you without additional text. Ask how you can help.]" : messageText || mediaFallback, 4096);
   if (!senderId || !chatId || !text) {
     await logEvent("ignored", "Message has no supported text or common media payload.", { updateId, senderId, chatId });
     return res.json({ ok: true, ignored: true, reason: "Unsupported message type." });
@@ -476,6 +514,7 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
     await releaseUpdate(updateId).catch(() => undefined);
     return res.status(503).json({ ok: false, error: "Could not load automation state." });
   }
+  // Group replies require both an allowed group and an explicitly permitted sender.
   const decision = decideReply({ enabled: enabledForThisUpdate, allowedContact: contactAllowed, text, duplicate: false });
   if (!decision.allowed) {
     await logEvent("blocked", decision.reason, { updateId, senderId, chatId });
@@ -512,7 +551,7 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
     let recentMessages: string[] = [];
     if (isPersistentStoreConfigured()) {
       try {
-        const history = await listConversationMessages(chatId);
+        const history = await listConversationMessages(chatId, 0, 100, businessConnectionId);
         const window = history.slice(-40);
         recentMessages = window.map(item => {
           const who = item.direction === "incoming" ? "Them" : "Me";
@@ -550,6 +589,7 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
     const delayMs = pickReplyDelayMs(features);
     if (delayMs > 0) await sleep(delayMs);
     const sendPayload: Record<string, unknown> = { chat_id: chatId, text: reply };
+    if (mode === "group") sendPayload.reply_parameters = { message_id: message.message_id, allow_sending_without_reply: false };
     if (mode === "business" && businessConnectionId && businessConnectionId !== "direct") {
       sendPayload.business_connection_id = businessConnectionId;
     }

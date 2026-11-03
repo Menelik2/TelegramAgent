@@ -265,3 +265,11 @@ body{background:var(--canvas);color:var(--text)}
 /* Authorized owner can page through the full stored text of long conversations. */
 .history-load-button{align-self:center;flex-shrink:0;margin:2px auto 12px;padding:9px 14px;border-radius:20px}
 .message-stream .bubble{white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
+
+/* Secure multi-owner dashboard editor */
+.owner-settings-row{align-items:flex-start;gap:18px}
+.owner-settings-content{flex:1;min-width:0}
+.owner-settings-content>p{max-width:650px}
+.owner-ids-input{display:block;width:100%;max-width:600px;min-height:150px;margin-top:9px;resize:vertical;line-height:1.6;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px}
+.owner-settings-row>.secondary-button{flex-shrink:0;margin-top:28px}
+@media(max-width:650px){.owner-settings-row{flex-direction:column}.owner-settings-row>.secondary-button{width:100%;margin-top:0}.owner-ids-input{max-width:100%}}

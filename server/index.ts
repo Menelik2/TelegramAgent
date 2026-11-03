@@ -8,7 +8,7 @@ import { rateLimit } from "./rate-limit.js";
 import { generateReply, isAiConfigured, AiQuotaError, getAiProviderLabel } from "./ai.js";
 import { getFeatureConfig, isInQuietHours, pickReplyDelayMs, sleep, isSameLocalDay, featureStatusSummary } from "./features.js";
 import { claimUpdate, clearStoredInboxHistory, getLastActivityAt, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate, getAiRuntimeSettings, saveAiRuntimeSettings, parseConversationId } from "./store.js";
-import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getPreferences, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setAutomationEnabled, setContact } from "./profile-store.js";
+import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getPreferences, getOwnerUserIds, saveOwnerUserIds, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setAutomationEnabled, setContact } from "./profile-store.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -17,18 +17,18 @@ app.use(cors({ origin: (process.env.FRONTEND_URL || "http://localhost:5173").spl
 app.use(express.json({ limit: "256kb" }));
 const port = Number(process.env.PORT || 8787);
 const allowlist = new Set((process.env.TELEGRAM_ALLOWED_USER_IDS || "").split(",").map(s => s.trim()).filter(Boolean));
-const ownerUserIds = new Set((process.env.TELEGRAM_OWNER_USER_IDS || "").split(",").map(s => s.trim()).filter(Boolean));
+async function ownerUserIds(): Promise<Set<string>> { return new Set(await getOwnerUserIds()); }
 const businessOwnerByConnection = new Map<string, string>();
 const allowedGroupIds = new Set((process.env.TELEGRAM_ALLOWED_GROUP_IDS || "").split(",").map(v => v.trim()).filter(Boolean));
 const botUsername = (process.env.TELEGRAM_BOT_USERNAME || "yeniagentbot").replace(/^@/, "").toLowerCase();
 const botId = (process.env.TELEGRAM_BOT_ID || "").trim();
 async function authorizedBusinessConnection(connectionId: string): Promise<boolean> {
-  if (!connectionId || !process.env.TELEGRAM_BOT_TOKEN || ownerUserIds.size === 0) return false;
+  if (!connectionId || !process.env.TELEGRAM_BOT_TOKEN || (await ownerUserIds()).size === 0) return false;
   const response = await fetch("https://api.telegram.org/bot" + process.env.TELEGRAM_BOT_TOKEN + "/getBusinessConnection", {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ business_connection_id: connectionId })
   });
   const body = await response.json() as { ok?: boolean; result?: { is_enabled?: boolean; user?: { id?: number } } };
-  return Boolean(response.ok && body.ok && body.result?.is_enabled && ownerUserIds.has(String(body.result?.user?.id || "")));
+  return Boolean(response.ok && body.ok && body.result?.is_enabled && (await ownerUserIds()).has(String(body.result?.user?.id || "")));
 }
 let automationEnabled = false;
 let lastWebhookAt: string | null = null;
@@ -69,10 +69,30 @@ app.get("/api/status", async (_req, res) => {
     lastActivityAt,
     appBaseUrl: baseUrl || null,
     webhookPath: "/api/telegram/webhook",
-    ownerIdsConfigured: ownerUserIds.size > 0
+    ownerIdsConfigured: await ownerUserIds().then(ids => ids.size > 0).catch(() => false)
   });
 });
 app.use("/api/agent", requireDashboardAuth);
+app.get("/api/agent/owner-ids", async (_req, res) => {
+  try {
+    const ids = await getOwnerUserIds();
+    return res.json({ ok: true, ownerIds: ids, count: ids.length, persistent: isProfileStoreConfigured() });
+  } catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Owner settings unavailable." }); }
+});
+app.put("/api/agent/owner-ids", async (req, res) => {
+  const values: unknown = req.body?.ownerIds;
+  if (!Array.isArray(values) || values.length > 100 || values.some(v => typeof v !== "string" || !/^[1-9][0-9]{0,19}$/.test(v))) {
+    return res.status(400).json({ ok: false, error: "Enter up to 100 valid numeric Telegram user IDs." });
+  }
+  const ids = [...new Set(values as string[])];
+  if (!ids.length) return res.status(400).json({ ok: false, error: "At least one owner is required." });
+  try {
+    await saveOwnerUserIds(ids);
+    businessOwnerByConnection.clear();
+    await logEvent("owner_settings_updated", "Authorized Telegram Business owner IDs updated.");
+    return res.json({ ok: true, ownerIds: ids, count: ids.length });
+  } catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Could not save owner IDs." }); }
+});
 app.post("/api/agent/telegram/configure-webhook", async (_req, res) => {
   const token = process.env.TELEGRAM_BOT_TOKEN || "";
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET || "";
@@ -393,7 +413,7 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
   if (connection) {
     const connId = String(connection.id || "");
     const ownerId = String(connection.user?.id || connection.user_id || "");
-    if (connId && ownerId && ownerUserIds.has(ownerId) && connection.is_enabled) businessOwnerByConnection.set(connId, ownerId);
+    if (connId && ownerId && (await ownerUserIds()).has(ownerId) && connection.is_enabled) businessOwnerByConnection.set(connId, ownerId);
     await logEvent("business_connection", connection.is_enabled ? "Business connection enabled." : "Business connection disabled.", { updateId, senderId: ownerId || undefined });
     return res.json({ ok: true, connectionReceived: true, enabled: Boolean(connection.is_enabled) });
   }
@@ -473,7 +493,7 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
   }
   const connectionOwnerId = mode === "business" ? businessOwnerByConnection.get(businessConnectionId) : undefined;
   const isOwnMessage =
-    ownerUserIds.has(senderId) ||
+    (await ownerUserIds()).has(senderId) ||
     (connectionOwnerId !== undefined && connectionOwnerId === senderId) ||
     Boolean(message.outgoing) ||
     Boolean(message.sender_business_bot);

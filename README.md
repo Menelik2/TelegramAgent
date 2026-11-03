@@ -8,7 +8,7 @@ This bot supports **authorized Telegram Business inbox conversations** and **app
 
 Set `TELEGRAM_BOT_USERNAME=yeniagentbot`, `TELEGRAM_ALLOWED_GROUP_IDS=-100...,-100...` and `TELEGRAM_OWNER_USER_IDS=<your numeric Telegram account ID>` in Vercel. `TELEGRAM_BOT_ID` is optional but recommended for reliable reply-to-bot identification. Telegram Business connections are verified through `getBusinessConnection`, including their enabled status and owner ID; never allow arbitrary connections. The configured default delay is 10 seconds (`REPLY_DELAY_MS_MIN=10000`, `REPLY_DELAY_MS_MAX=10000`). Set the Vercel function max duration high enough for the delay plus Gemini and Telegram calls.
 
-Run `npm run typecheck` and `npm test` before deployment. Configure the webhook again in Settings after deploying, so Telegram delivers group messages as well as Business updates. Group privacy mode should remain enabled; Telegram's group delivery rules still apply. Message history is scoped by Business connection and chat ID to prevent cross-conversation context leakage.
+Run `npm run typecheck` and `npm test` before deployment. Configure the webhook again in Settings after deploying, so Telegram delivers group messages as well as Business updates. Group privacy mode should remain enabled; Telegram's group delivery rules still apply. Message history is scoped by Business connection and chat ID. In groups, it is additionally scoped to the sender's numeric Telegram ID so two people mentioning the bot in the same group do not share AI context. The Telegram destination remains the real group chat ID. Previously stored group history from before this change is not included in the new per-sender context.
 
 ## Natural text replies
 

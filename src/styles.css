@@ -273,3 +273,14 @@ body{background:var(--canvas);color:var(--text)}
 .owner-ids-input{display:block;width:100%;max-width:600px;min-height:150px;margin-top:9px;resize:vertical;line-height:1.6;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px}
 .owner-settings-row>.secondary-button{flex-shrink:0;margin-top:28px}
 @media(max-width:650px){.owner-settings-row{flex-direction:column}.owner-settings-row>.secondary-button{width:100%;margin-top:0}.owner-ids-input{max-width:100%}}
+
+/* Multi-owner settings */
+.owner-settings{align-items:flex-start}
+.owner-settings-content{flex:1;min-width:0}
+.owner-add-row{display:flex;gap:9px;margin:12px 0;align-items:center}
+.owner-add-row .form-control{flex:1;min-width:0;max-width:320px}
+.owner-id-list{display:grid;gap:7px;margin-top:12px}
+.owner-id-item{display:flex;align-items:center;gap:10px;border:1px solid #303440;border-radius:9px;padding:9px 11px;background:#151820}
+.owner-id-item code{font-size:12px;color:#e2ddff;overflow-wrap:anywhere}
+.owner-id-item span{margin-left:auto;font-size:10px;color:#9aa0b3}
+@media(max-width:560px){.owner-add-row{flex-wrap:wrap}.owner-add-row .form-control{max-width:none;width:100%;flex-basis:100%}.owner-add-row button{width:100%}.owner-id-item{flex-wrap:wrap}}

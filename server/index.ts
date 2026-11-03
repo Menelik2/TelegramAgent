@@ -246,7 +246,10 @@ app.delete("/api/inbox/history", requireDashboardAuth, async (_req, res) => {
 app.get("/api/inbox/:chatId/messages", requireDashboardAuth, async (req, res) => {
   const chatId = String(req.params.chatId || "");
   if (!/^-?[0-9]{1,22}$/.test(chatId)) return res.status(400).json({ ok: false, error: "Invalid Telegram chat ID." });
-  try { return res.json({ ok: true, messages: await listConversationMessages(chatId) }); }
+  const offset = Number(req.query.offset ?? 0);
+  const limit = Number(req.query.limit ?? 100);
+  if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 200) return res.status(400).json({ ok: false, error: "Invalid history pagination." });
+  try { const messages = await listConversationMessages(chatId, offset, limit); return res.json({ ok: true, messages, hasMore: messages.length === limit, nextOffset: offset + messages.length }); }
   catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Conversation history unavailable." }); }
 });
 app.post("/api/inbox/:chatId/reply", rateLimit({ name: "manual-reply", limit: 30, windowMs: 60_000 }), requireDashboardAuth, async (req, res) => {

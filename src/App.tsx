@@ -25,41 +25,6 @@ const nav = [{ label: "Overview", icon: Gauge }, { label: "Inbox", icon: Message
 
 function MemoryPanel({ apiRequest, readJson, flash }: { apiRequest: (path: string, init?: RequestInit) => Promise<Response>; readJson: (r: Response) => Promise<Record<string, any>>; flash: (m: string) => void }) {
   const [items, setItems] = useState<Array<{ id: number; memory: string; category: string; createdAt?: string }>>([]);
-  const loadOwners = async () => {
-    if (!dashboardToken) return;
-    try {
-      const response = await apiRequest("/api/agent/owners");
-      const data = await readJson(response);
-      if (!response.ok) throw new Error(data.error || "Could not load owners.");
-      setOwnerIds(Array.isArray(data.ownerIds) ? data.ownerIds : []);
-      setEnvironmentOwners(Array.isArray(data.environmentOwners) ? data.environmentOwners : []);
-      setOwnerError("");
-    } catch (error) { setOwnerError(error instanceof Error ? error.message : "Could not load owners."); }
-  };
-  useEffect(() => { if (dashboardToken) void loadOwners(); else { setOwnerIds([]); setEnvironmentOwners([]); } }, [dashboardToken, apiBase]);
-  const addOwner = async () => {
-    const id = ownerDraft.trim();
-    if (!/^[1-9][0-9]{0,19}$/.test(id)) { setOwnerError("Enter a valid numeric Telegram user ID."); return; }
-    setOwnerBusy(true);
-    try {
-      const response = await apiRequest("/api/agent/owners", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: id }) });
-      const data = await readJson(response);
-      if (!response.ok) throw new Error(data.error || "Could not add owner.");
-      setOwnerDraft(""); await loadOwners(); flash("Owner added.");
-    } catch (error) { setOwnerError(error instanceof Error ? error.message : "Could not add owner."); }
-    finally { setOwnerBusy(false); }
-  };
-  const removeOwner = async (id: string) => {
-    if (!window.confirm("Remove this Telegram owner from dashboard-managed permissions?")) return;
-    setOwnerBusy(true);
-    try {
-      const response = await apiRequest("/api/agent/owners/" + encodeURIComponent(id), { method: "DELETE" });
-      const data = await readJson(response);
-      if (!response.ok) throw new Error(data.error || "Could not remove owner.");
-      await loadOwners(); flash("Owner removed.");
-    } catch (error) { setOwnerError(error instanceof Error ? error.message : "Could not remove owner."); }
-    finally { setOwnerBusy(false); }
-  };
   const [draft, setDraft] = useState("");
   const [category, setCategory] = useState("preference");
   const [loading, setLoading] = useState(true);
@@ -300,6 +265,41 @@ export default function App() {
       .finally(() => { if (active) setOwnerIdsLoading(false); });
     return () => { active = false; };
   }, [dashboardToken, apiBase]);
+  const loadOwners = async () => {
+    if (!dashboardToken) return;
+    try {
+      const response = await apiRequest("/api/agent/owners");
+      const data = await readJson(response);
+      if (!response.ok) throw new Error(data.error || "Could not load owners.");
+      setOwnerIds(Array.isArray(data.ownerIds) ? data.ownerIds : []);
+      setEnvironmentOwners(Array.isArray(data.environmentOwners) ? data.environmentOwners : []);
+      setOwnerError("");
+    } catch (error) { setOwnerError(error instanceof Error ? error.message : "Could not load owners."); }
+  };
+  useEffect(() => { if (dashboardToken) void loadOwners(); else { setOwnerIds([]); setEnvironmentOwners([]); } }, [dashboardToken, apiBase]);
+  const addOwner = async () => {
+    const id = ownerDraft.trim();
+    if (!/^[1-9][0-9]{0,19}$/.test(id)) { setOwnerError("Enter a valid numeric Telegram user ID."); return; }
+    setOwnerBusy(true);
+    try {
+      const response = await apiRequest("/api/agent/owners", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: id }) });
+      const data = await readJson(response);
+      if (!response.ok) throw new Error(data.error || "Could not add owner.");
+      setOwnerDraft(""); await loadOwners(); flash("Owner added.");
+    } catch (error) { setOwnerError(error instanceof Error ? error.message : "Could not add owner."); }
+    finally { setOwnerBusy(false); }
+  };
+  const removeOwner = async (id: string) => {
+    if (!window.confirm("Remove this Telegram owner from dashboard-managed permissions?")) return;
+    setOwnerBusy(true);
+    try {
+      const response = await apiRequest("/api/agent/owners/" + encodeURIComponent(id), { method: "DELETE" });
+      const data = await readJson(response);
+      if (!response.ok) throw new Error(data.error || "Could not remove owner.");
+      await loadOwners(); flash("Owner removed.");
+    } catch (error) { setOwnerError(error instanceof Error ? error.message : "Could not remove owner."); }
+    finally { setOwnerBusy(false); }
+  };
   const saveOwnerIds = async () => {
     const ids = [...new Set(ownerIdsText.split(/[\s,;]+/).map(value => value.trim()).filter(Boolean))];
     if (!ids.length || ids.length > 100 || ids.some(id => !/^[1-9][0-9]{0,19}$/.test(id))) {

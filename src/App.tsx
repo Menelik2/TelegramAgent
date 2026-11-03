@@ -265,8 +265,8 @@ export default function App() {
       }
       const permissions = new Map<string, boolean>((contactData.contacts || []).map((x: {senderId:string;enabled:boolean}) => [x.senderId, x.enabled]));
       const colors = ["lilac", "blue", "mint", "peach"];
-      const mapped: Contact[] = (inboxData.conversations || []).map((item: {chatId:string;senderId?:string;senderName:string;username:string;lastMessage:string;lastMessageAt:string;lastDirection:string}, i:number) => ({
-        id: item.chatId, senderId: item.senderId, name: item.senderName || item.username || item.chatId,
+      const mapped: Contact[] = (inboxData.conversations || []).map((item: {conversationId?:string;chatId:string;senderId?:string;senderName:string;username:string;lastMessage:string;lastMessageAt:string;lastDirection:string}, i:number) => ({
+        id: item.conversationId || item.chatId, senderId: item.senderId, name: item.senderName || item.username || item.chatId,
         handle: item.username ? "@" + item.username : (item.senderId ? "id " + item.senderId : item.chatId),
         initials: (item.senderName || item.username || item.chatId).split(/\s+/).slice(0,2).map((s:string)=>s[0]).join("").toUpperCase() || "?",
         color: colors[i % colors.length], last: item.lastMessage,

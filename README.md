@@ -2,6 +2,14 @@
 
 A full-stack Telegram Business AI assistant with a modern dashboard, explicit contact allowlists, AI-generated replies, memory controls, and safety-first automation.
 
+## @yeniagentbot group and Business routing
+
+This bot supports **authorized Telegram Business inbox conversations** and **approved Telegram groups**. In groups it responds only to explicit `@yeniagentbot` mention entities or replies to the bot's messages; normal group traffic is ignored. Group senders must also be allowed in `TELEGRAM_ALLOWED_USER_IDS` or the dashboard contact permissions. The destination is always the incoming chat ID; group replies use Telegram `reply_parameters` to reply to the triggering message.
+
+Set `TELEGRAM_BOT_USERNAME=yeniagentbot`, `TELEGRAM_ALLOWED_GROUP_IDS=-100...,-100...` and `TELEGRAM_OWNER_USER_IDS=<your numeric Telegram account ID>` in Vercel. `TELEGRAM_BOT_ID` is optional but recommended for reliable reply-to-bot identification. Telegram Business connections are verified through `getBusinessConnection`, including their enabled status and owner ID; never allow arbitrary connections. The configured default delay is 10 seconds (`REPLY_DELAY_MS_MIN=10000`, `REPLY_DELAY_MS_MAX=10000`). Set the Vercel function max duration high enough for the delay plus Gemini and Telegram calls.
+
+Run `npm run typecheck` and `npm test` before deployment. Configure the webhook again in Settings after deploying, so Telegram delivers group messages as well as Business updates. Group privacy mode should remain enabled; Telegram's group delivery rules still apply. Message history is scoped by Business connection and chat ID to prevent cross-conversation context leakage.
+
 ## Natural text replies
 
 Approved contacts receive replies that follow the conversation, address multi-part messages, and match the sender’s language, script and tone. Greetings and short follow-ups stay brief; questions get enough detail to answer them. The agent uses saved owner notes and available conversation history without inventing personal facts or commitments.

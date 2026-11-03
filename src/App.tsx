@@ -213,6 +213,10 @@ export default function App() {
   const [aiModel, setAiModel] = useState("gemini-3.5-flash-lite");
   const [aiModelTesting, setAiModelTesting] = useState(false);
   const [aiSettingsLoading, setAiSettingsLoading] = useState(false);
+  const [ownerIdsText, setOwnerIdsText] = useState("");
+  const [ownerIdsLoading, setOwnerIdsLoading] = useState(false);
+  const [ownerIdsSaving, setOwnerIdsSaving] = useState(false);
+  const [ownerIdsError, setOwnerIdsError] = useState("");
   const apiBase = import.meta.env.VITE_API_BASE_URL || "";
   const apiRequest = (path: string, init: RequestInit = {}) => fetch(`${apiBase}${path}`, { ...init, headers: { ...(init.headers || {}), "x-dashboard-token": dashboardToken } });
   const [draft, setDraft] = useState("");
@@ -244,6 +248,33 @@ export default function App() {
       .finally(() => { if (active) setAiSettingsLoading(false); });
     return () => { active = false; };
   }, [dashboardToken, apiBase]);
+  useEffect(() => {
+    if (!dashboardToken) { setOwnerIdsText(""); return; }
+    let active = true;
+    setOwnerIdsLoading(true); setOwnerIdsError("");
+    apiRequest("/api/agent/owner-ids").then(async response => {
+      const data = await readJson(response);
+      if (!response.ok) throw new Error(data.error || "Unable to load owner IDs.");
+      if (active) setOwnerIdsText((data.ownerIds || []).join("\n"));
+    }).catch(error => { if (active) setOwnerIdsError(error instanceof Error ? error.message : "Unable to load owners."); })
+      .finally(() => { if (active) setOwnerIdsLoading(false); });
+    return () => { active = false; };
+  }, [dashboardToken, apiBase]);
+  const saveOwnerIds = async () => {
+    const ids = [...new Set(ownerIdsText.split(/[\s,;]+/).map(value => value.trim()).filter(Boolean))];
+    if (!ids.length || ids.length > 100 || ids.some(id => !/^[1-9][0-9]{0,19}$/.test(id))) {
+      setOwnerIdsError("Enter between 1 and 100 valid numeric Telegram user IDs."); return;
+    }
+    setOwnerIdsSaving(true); setOwnerIdsError("");
+    try {
+      const response = await apiRequest("/api/agent/owner-ids", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ownerIds: ids }) });
+      const data = await readJson(response);
+      if (!response.ok) throw new Error(data.error || "Could not save owner IDs.");
+      setOwnerIdsText((data.ownerIds || ids).join("\n"));
+      flash("Saved " + ids.length + " Telegram Business owner IDs.");
+    } catch (error) { setOwnerIdsError(error instanceof Error ? error.message : "Could not save owner IDs."); }
+    finally { setOwnerIdsSaving(false); }
+  };
   const flash = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2600); };
   const refreshLiveInbox = async () => {
     if (!dashboardToken) { flash("Enter your dashboard API token in Settings first."); return; }
@@ -388,6 +419,17 @@ export default function App() {
               <input className="form-control" type="password" value={dashboardToken} onChange={e => setDashboardToken(e.target.value)} placeholder="Paste dashboard API token" />
               <button className="secondary-button compact" style={{marginTop:10}} onClick={() => apiRequest("/api/agent/settings").then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Auth failed"); flash("Token verified."); void refreshLiveInbox(); }).catch(e => flash(e instanceof Error ? e.message : "Auth failed"))}>Verify token</button>
             </div></div>
+            <div className="integration-row owner-settings-row">
+              <div className="owner-settings-content">
+                <b>Telegram Business owners</b>
+                <p>Manage multiple authorized account owners. These IDs are not dashboard login credentials. Changes are saved in Supabase and apply to new webhook updates.</p>
+                <label className="field-label" htmlFor="telegram-owner-ids">Telegram user IDs — one per line or comma-separated</label>
+                <textarea id="telegram-owner-ids" className="form-control owner-ids-input" rows={6} value={ownerIdsText} onChange={e => setOwnerIdsText(e.target.value)} disabled={!dashboardToken || ownerIdsLoading || ownerIdsSaving} placeholder={"123456789\n987654321\n456789123"} />
+                <p className="helper-text">{ownerIdsText.split(/[\s,;]+/).filter(Boolean).length} IDs entered · Up to 100 owners</p>
+                {ownerIdsError ? <p role="alert" className="helper-text" style={{color:"#ffaaa0"}}>{ownerIdsError}</p> : null}
+              </div>
+              <button className="secondary-button compact" disabled={!dashboardToken || ownerIdsLoading || ownerIdsSaving} onClick={() => void saveOwnerIds()}>{ownerIdsSaving ? "Saving…" : ownerIdsLoading ? "Loading…" : "Save owners"}</button>
+            </div>
             <div className="integration-row"><div><b>Telegram webhook</b><p>{status?.appBaseUrl || "APP_BASE_URL not set"}</p></div>
               <button className="secondary-button compact" disabled={!dashboardToken} onClick={() => apiRequest("/api/agent/telegram/configure-webhook", { method: "POST" }).then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Failed"); flash(d.message || "Webhook configured."); }).catch(e => flash(e instanceof Error ? e.message : "Webhook failed"))}>Configure webhook</button>
             </div>

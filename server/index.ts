@@ -7,7 +7,7 @@ import { groupSenderScope, isGroupAddressedToBot, stripBotMention } from "./tele
 import { rateLimit } from "./rate-limit.js";
 import { generateReply, isAiConfigured, AiQuotaError, getAiProviderLabel } from "./ai.js";
 import { getFeatureConfig, isInQuietHours, pickReplyDelayMs, sleep, isSameLocalDay, featureStatusSummary } from "./features.js";
-import { claimUpdate, clearStoredInboxHistory, getLastActivityAt, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate, getAiRuntimeSettings, saveAiRuntimeSettings, parseConversationId } from "./store.js";
+import { claimUpdate, clearStoredInboxHistory, getLastActivityAt, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate, getAiRuntimeSettings, saveAiRuntimeSettings, parseConversationId, listDashboardOwnerIds, addDashboardOwnerId, removeDashboardOwnerId } from "./store.js";
 import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getPreferences, getOwnerUserIds, saveOwnerUserIds, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setAutomationEnabled, setContact } from "./profile-store.js";
 
 const app = express();
@@ -18,6 +18,15 @@ app.use(express.json({ limit: "256kb" }));
 const port = Number(process.env.PORT || 8787);
 const allowlist = new Set((process.env.TELEGRAM_ALLOWED_USER_IDS || "").split(",").map(s => s.trim()).filter(Boolean));
 async function ownerUserIds(): Promise<Set<string>> { return new Set(await getOwnerUserIds()); }
+const isTelegramUserId = (value: unknown): value is string => typeof value === "string" && /^[1-9][0-9]{0,19}$/.test(value);
+async function getAuthorizedOwnerIds(): Promise<Set<string>> {
+  const owners = new Set(ownerUserIds);
+  if (isPersistentStoreConfigured()) {
+    const additional = await listDashboardOwnerIds();
+    for (const id of additional) owners.add(id);
+  }
+  return owners;
+}
 const businessOwnerByConnection = new Map<string, string>();
 const allowedGroupIds = new Set((process.env.TELEGRAM_ALLOWED_GROUP_IDS || "").split(",").map(v => v.trim()).filter(Boolean));
 const botUsername = (process.env.TELEGRAM_BOT_USERNAME || "yeniagentbot").replace(/^@/, "").toLowerCase();
@@ -154,6 +163,34 @@ app.get("/api/agent/settings", async (_req, res) => {
   } catch {
     return res.status(503).json({ ok: false, error: "Could not load persistent agent settings." });
   }
+});
+app.get("/api/agent/owners", async (_req, res) => {
+  try {
+    const additional = isPersistentStoreConfigured() ? await listDashboardOwnerIds() : [];
+    return res.json({ ok: true, environmentOwners: [...ownerUserIds].sort(), dashboardOwners: additional, ownerIds: [...new Set([...ownerUserIds, ...additional])].sort() });
+  } catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Could not load owners." }); }
+});
+app.post("/api/agent/owners", async (req, res) => {
+  const userId: unknown = req.body?.userId;
+  if (!isTelegramUserId(userId)) return res.status(400).json({ ok: false, error: "Enter a valid numeric Telegram user ID." });
+  if (!isPersistentStoreConfigured()) return res.status(503).json({ ok: false, error: "Supabase is required for dashboard-managed owners." });
+  try {
+    const existing = await listDashboardOwnerIds();
+    if (!existing.includes(userId) && existing.length >= 500) return res.status(409).json({ ok: false, error: "Owner limit reached." });
+    await addDashboardOwnerId(userId);
+    await logEvent("owner_added", "An authorized owner ID was added in Settings.");
+    return res.json({ ok: true });
+  } catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Could not add owner." }); }
+});
+app.delete("/api/agent/owners/:userId", async (req, res) => {
+  const userId = String(req.params.userId || "");
+  if (!isTelegramUserId(userId)) return res.status(400).json({ ok: false, error: "Invalid owner ID." });
+  if (ownerUserIds.has(userId)) return res.status(409).json({ ok: false, error: "This owner is configured in Vercel. Remove it from TELEGRAM_OWNER_USER_IDS instead." });
+  try {
+    await removeDashboardOwnerId(userId);
+    await logEvent("owner_removed", "An authorized owner ID was removed in Settings.");
+    return res.json({ ok: true });
+  } catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Could not remove owner." }); }
 });
 const AI_MODELS = {
   gemini: ["gemini-3.5-flash-lite"],

@@ -25,6 +25,41 @@ const nav = [{ label: "Overview", icon: Gauge }, { label: "Inbox", icon: Message
 
 function MemoryPanel({ apiRequest, readJson, flash }: { apiRequest: (path: string, init?: RequestInit) => Promise<Response>; readJson: (r: Response) => Promise<Record<string, any>>; flash: (m: string) => void }) {
   const [items, setItems] = useState<Array<{ id: number; memory: string; category: string; createdAt?: string }>>([]);
+  const loadOwners = async () => {
+    if (!dashboardToken) return;
+    try {
+      const response = await apiRequest("/api/agent/owners");
+      const data = await readJson(response);
+      if (!response.ok) throw new Error(data.error || "Could not load owners.");
+      setOwnerIds(Array.isArray(data.ownerIds) ? data.ownerIds : []);
+      setEnvironmentOwners(Array.isArray(data.environmentOwners) ? data.environmentOwners : []);
+      setOwnerError("");
+    } catch (error) { setOwnerError(error instanceof Error ? error.message : "Could not load owners."); }
+  };
+  useEffect(() => { if (dashboardToken) void loadOwners(); else { setOwnerIds([]); setEnvironmentOwners([]); } }, [dashboardToken, apiBase]);
+  const addOwner = async () => {
+    const id = ownerDraft.trim();
+    if (!/^[1-9][0-9]{0,19}$/.test(id)) { setOwnerError("Enter a valid numeric Telegram user ID."); return; }
+    setOwnerBusy(true);
+    try {
+      const response = await apiRequest("/api/agent/owners", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ userId: id }) });
+      const data = await readJson(response);
+      if (!response.ok) throw new Error(data.error || "Could not add owner.");
+      setOwnerDraft(""); await loadOwners(); flash("Owner added.");
+    } catch (error) { setOwnerError(error instanceof Error ? error.message : "Could not add owner."); }
+    finally { setOwnerBusy(false); }
+  };
+  const removeOwner = async (id: string) => {
+    if (!window.confirm("Remove this Telegram owner from dashboard-managed permissions?")) return;
+    setOwnerBusy(true);
+    try {
+      const response = await apiRequest("/api/agent/owners/" + encodeURIComponent(id), { method: "DELETE" });
+      const data = await readJson(response);
+      if (!response.ok) throw new Error(data.error || "Could not remove owner.");
+      await loadOwners(); flash("Owner removed.");
+    } catch (error) { setOwnerError(error instanceof Error ? error.message : "Could not remove owner."); }
+    finally { setOwnerBusy(false); }
+  };
   const [draft, setDraft] = useState("");
   const [category, setCategory] = useState("preference");
   const [loading, setLoading] = useState(true);
@@ -213,6 +248,11 @@ export default function App() {
   const [aiModel, setAiModel] = useState("gemini-3.5-flash-lite");
   const [aiModelTesting, setAiModelTesting] = useState(false);
   const [aiSettingsLoading, setAiSettingsLoading] = useState(false);
+  const [ownerIds, setOwnerIds] = useState<string[]>([]);
+  const [environmentOwners, setEnvironmentOwners] = useState<string[]>([]);
+  const [ownerDraft, setOwnerDraft] = useState("");
+  const [ownerBusy, setOwnerBusy] = useState(false);
+  const [ownerError, setOwnerError] = useState("");
   const [ownerIdsText, setOwnerIdsText] = useState("");
   const [ownerIdsLoading, setOwnerIdsLoading] = useState(false);
   const [ownerIdsSaving, setOwnerIdsSaving] = useState(false);
@@ -429,6 +469,18 @@ export default function App() {
                 {ownerIdsError ? <p role="alert" className="helper-text" style={{color:"#ffaaa0"}}>{ownerIdsError}</p> : null}
               </div>
               <button className="secondary-button compact" disabled={!dashboardToken || ownerIdsLoading || ownerIdsSaving} onClick={() => void saveOwnerIds()}>{ownerIdsSaving ? "Saving…" : ownerIdsLoading ? "Loading…" : "Save owners"}</button>
+            </div>
+            <div className="integration-row owner-settings">
+              <div className="owner-settings-content"><b>Telegram owners</b>
+                <p>Manage multiple authorized Telegram user IDs. Owners configured in Vercel remain protected and cannot be removed here.</p>
+                <div className="owner-add-row">
+                  <input className="form-control" inputMode="numeric" aria-label="New Telegram owner ID" placeholder="Numeric Telegram user ID" value={ownerDraft} onChange={e => setOwnerDraft(e.target.value)} />
+                  <button className="secondary-button compact" disabled={!dashboardToken || ownerBusy || !ownerDraft.trim()} onClick={() => void addOwner()}>Add owner</button>
+                </div>
+                {ownerError ? <p role="alert" className="helper-text" style={{color:"#f5a5a5"}}>{ownerError}</p> : null}
+                <div className="owner-id-list">{ownerIds.map(id => <div className="owner-id-item" key={id}><code>{id}</code><span>{environmentOwners.includes(id) ? "Vercel" : "Dashboard"}</span>{!environmentOwners.includes(id) ? <button className="secondary-button compact" disabled={ownerBusy} onClick={() => void removeOwner(id)}>Remove</button> : null}</div>)}</div>
+                {!ownerIds.length && <p className="helper-text">No owners loaded. Configure Supabase and apply the owner IDs migration.</p>}
+              </div>
             </div>
             <div className="integration-row"><div><b>Telegram webhook</b><p>{status?.appBaseUrl || "APP_BASE_URL not set"}</p></div>
               <button className="secondary-button compact" disabled={!dashboardToken} onClick={() => apiRequest("/api/agent/telegram/configure-webhook", { method: "POST" }).then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Failed"); flash(d.message || "Webhook configured."); }).catch(e => flash(e instanceof Error ? e.message : "Webhook failed"))}>Configure webhook</button>

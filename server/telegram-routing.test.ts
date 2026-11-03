@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isGroupAddressedToBot, stripBotMention } from "./telegram-routing.js";
+import { groupSenderScope, isGroupAddressedToBot, stripBotMention } from "./telegram-routing.js";
 import { conversationId, parseConversationId } from "./store.js";
 
 describe("Telegram group routing", () => {
@@ -21,6 +21,16 @@ describe("conversation isolation", () => {
     const ids = ["direct", "group:-100100", "business-connection-1"].map(connection => conversationId(connection, "-100100"));
     expect(new Set(ids).size).toBe(3);
     expect(parseConversationId(ids[1])).toEqual({ connectionId: "group:-100100", chatId: "-100100" });
+  });
+  it("keeps two senders in the same group in separate histories", () => {
+    const groupId = "-1001234567890";
+    const first = conversationId(groupSenderScope(groupId, "111"), groupId);
+    const second = conversationId(groupSenderScope(groupId, "222"), groupId);
+    expect(first).not.toBe(second);
+    expect(parseConversationId(first)).toEqual({ connectionId: "group:-1001234567890:user:111", chatId: groupId });
+    expect(parseConversationId(second)).toEqual({ connectionId: "group:-1001234567890:user:222", chatId: groupId });
+    expect(() => groupSenderScope("invalid", "111")).toThrow();
+    expect(() => groupSenderScope(groupId, "invalid")).toThrow();
   });
   it("rejects malformed IDs", () => {
     expect(parseConversationId("bad")).toBeNull();

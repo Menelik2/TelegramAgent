@@ -27,7 +27,7 @@ const nativeFetch=globalThis.fetch;
 let db:PGlite, server:Server, base:string;
 let delayGate:Promise<void>|undefined;
 let sent:Record<string,unknown>[]=[], revoked=false, brokenStorage=false, uncertainSend=false;
-let brokenAccountWrites=false, brokenJobWrites=false, brokenConnectionWrites=false;
+let brokenAccountWrites=false, brokenJobWrites=false, brokenConnectionWrites=false, brokenMessageWrites=false;
 const unavailableConnections=new Set<string>();
 const json=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers:{"content-type":"application/json"}});
 const ident=(s:string)=>{if(!/^[a-z_][a-z0-9_]*$/.test(s))throw new Error("Bad test identifier");return '"'+s+'"';};
@@ -44,8 +44,10 @@ async function sqlRest(url:URL,init:RequestInit) {
   let set="";
   if(init.method==="PATCH") set=Object.entries(data).map(([k,v])=>`${ident(k)}=${bind(v)}`).join(",");
   for(const [key,val] of url.searchParams) {
-    if(["select","order","limit","offset"].includes(key))continue;
+    if(["select","order","limit","offset","tenant_messages.order","tenant_messages.limit"].includes(key))continue;
     if(val.startsWith("eq."))where.push(`${ident(key)}=${bind(val.slice(3))}`);
+    else if(val.startsWith("lt."))where.push(`${ident(key)}<${bind(val.slice(3))}`);
+    else if(val.startsWith("like."))where.push(`${ident(key)} like ${bind(val.slice(5).replaceAll("*","%"))}`);
     else if(val==="not.is.null")where.push(`${ident(key)} is not null`);
     else if(val.startsWith("in.("))where.push(`${ident(key)} in (${val.slice(4,-1).split(",").map(bind).join(",")})`);
     else throw new Error("Unsupported test filter "+val);
@@ -59,7 +61,15 @@ async function sqlRest(url:URL,init:RequestInit) {
   else if(init.method==="DELETE")query=`delete from ${ident(name)}${filter} returning *`;
   else {
     const select=url.searchParams.get("select");
-    query=`select ${select?select.split(",").map(ident).join(","):"*"} from ${ident(name)}${filter}`;
+    let columns=select&&!select.includes("tenant_messages(")?select.split(",").map(ident).join(","):"*";
+    if(select?.includes("tenant_messages(")) {
+      expect(name).toBe("tenant_conversations");
+      expect(select).toBe("owner_id,connection_id,chat_id,last_at,tenant_messages(body,direction,created_at)");
+      expect(url.searchParams.get("tenant_messages.order")).toBe("id.desc");
+      expect(url.searchParams.get("tenant_messages.limit")).toBe("1");
+      columns=`owner_id,connection_id,chat_id,last_at,coalesce((select jsonb_agg(recent) from (select body,direction,created_at from tenant_messages m where m.owner_id=tenant_conversations.owner_id and m.connection_id=tenant_conversations.connection_id and m.chat_id=tenant_conversations.chat_id order by id desc limit 1) recent),'[]'::jsonb) as tenant_messages`;
+    }
+    query=`select ${columns} from ${ident(name)}${filter}`;
     const order=url.searchParams.get("order");
     if(order) query+=" order by "+order.split(",").map(v=>{const[k,d]=v.split(".");return ident(k)+(d==="desc"?" desc":" asc");}).join(",");
     query+=` limit ${Number(url.searchParams.get("limit")||1000)} offset ${Number(url.searchParams.get("offset")||0)}`;
@@ -84,10 +94,12 @@ beforeAll(async()=>{
   vi.stubEnv("SUPABASE_URL","https://tenant-storage.test");vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY","test-only");vi.stubEnv("CRON_SECRET","x".repeat(40));vi.stubEnv("APP_BASE_URL","https://app.test");
   db=new PGlite();await db.exec("create role anon;create role authenticated;create role service_role;");
   await db.exec(await readFile("supabase/migrations/20261104010000_multi_user_agent.sql","utf8"));
+  await db.exec(await readFile("supabase/migrations/20261105000000_admin_inbox_consent.sql","utf8"));
+  await db.exec(await readFile("supabase/migrations/20261105000000_tenant_ai_credentials.sql","utf8"));
   vi.stubGlobal("fetch",vi.fn(async(input:string|URL|Request,init:RequestInit={})=>{
     const url=new URL(String(input));
     if(url.hostname==="tenant-storage.test") {
-      if(brokenStorage || (brokenAccountWrites && init.method==="PATCH" && url.pathname.endsWith("tenant_accounts"))
+      if(brokenStorage || (brokenMessageWrites && init.method==="POST" && url.pathname.endsWith("tenant_messages")) || (brokenAccountWrites && init.method==="PATCH" && url.pathname.endsWith("tenant_accounts"))
         || (brokenJobWrites && init.method==="PATCH" && url.pathname.endsWith("tenant_jobs"))
         || (brokenConnectionWrites && url.pathname.endsWith("tenant_connect")))return json({},503);
       return json(await sqlRest(url,init));
@@ -107,7 +119,7 @@ beforeAll(async()=>{
 beforeEach(async()=>{
   await db.exec("truncate tenant_accounts,tenant_connections,tenant_conversations,tenant_messages,tenant_jobs,tenant_daily_usage,tenant_control_updates cascade");
   delayGate=undefined;vi.mocked(waitUntil).mockClear();vi.stubEnv("TENANT_WORKER_MODE","external");
-  sent=[];revoked=brokenStorage=uncertainSend=brokenAccountWrites=brokenJobWrites=brokenConnectionWrites=false;
+  sent=[];revoked=brokenStorage=uncertainSend=brokenMessageWrites=brokenAccountWrites=brokenJobWrites=brokenConnectionWrites=false;
   unavailableConnections.clear();vi.mocked(isAiConfigured).mockReturnValue(true);vi.stubEnv("CRON_SECRET","x".repeat(40));vi.stubEnv("APP_BASE_URL","https://app.test");vi.stubEnv("VERCEL_URL","");
   vi.mocked(generateReply).mockReset().mockResolvedValue("Test reply");
 });
@@ -154,7 +166,7 @@ describe("multi-user account boundary",()=>{
   it("uses only the tenant's settings and thread when generating and delivering",async()=>{
     await connect(1);await connect(2);await ingest(1,"1");await ingest(2,"2");
     const job=await claim();await processTenantJob(job);
-    expect(generateReply).toHaveBeenCalledWith(expect.objectContaining({incomingText:"private-for-1",tone:"tone-1"}));
+    expect(generateReply).toHaveBeenCalledWith(expect.objectContaining({incomingText:"private-for-1",tone:"tone-1"}),undefined);
     expect(JSON.stringify(vi.mocked(generateReply).mock.calls)).not.toContain("private-for-2");
     expect(sent[0]).toMatchObject({business_connection_id:"c1",chat_id:"42"});
     expect((await db.query<{status:string}>("select status from tenant_jobs where update_id='1'")).rows[0].status).toBe("sent");
@@ -320,7 +332,7 @@ describe("automatic reply activation",()=>{
   });
   it("uses the same activation checks in Telegram commands and private buttons",async()=>{
     await connect(1,false);vi.mocked(isAiConfigured).mockReturnValue(false);
-    await tenantControls("1","/enable");expect(String(sent[0].text)).toContain("AI provider is not configured");
+    await tenantControls("1","/enable");expect(String(sent[0].text)).toContain("Add your own Gemini API key");
     expect((await(await request("/me")).json()).account.enabled).toBe(false);
     vi.mocked(isAiConfigured).mockReturnValue(true);
     await tenantWebhook({update_id:201,callback_query:{id:"enable",from:{id:1},message:{chat:{type:"private",id:1}},data:"tenant:enable"}});
@@ -440,5 +452,68 @@ describe("automatic webhook worker",()=>{
     await connect(1);await ingest(1,"701");const job=await claim();
     await withOperationDeadline(0,async()=>{await new Promise(resolve=>setTimeout(resolve,5));await processTenantJob(job);});
     expect(sent).toEqual([]);expect((await db.query<{status:string}>("select status from tenant_jobs where update_id='701'")).rows[0].status).toBe("failed");
+  });
+});
+
+
+describe("private workspace inbox",()=>{
+  it("returns bounded previews, searches across pages, and never joins another owner's messages",async()=>{
+    await connect(1);await connect(2);await ingest(1,"1");await ingest(2,"2");
+    await db.exec("insert into tenant_conversations(owner_id,connection_id,chat_id,last_at) select '1','c1',n::text,now()-interval '1 day' from generate_series(1000,1100) n");
+    const first=await(await request("/inbox")).json();
+    expect(first.conversations).toHaveLength(100);expect(first.hasMore).toBe(true);expect(first.nextOffset).toBe(100);
+    expect(first.conversations[0]).toMatchObject({chat_id:"42",last_message:"private-for-1"});
+    expect(JSON.stringify(first)).not.toContain("private-for-2");
+    const second=await(await request("/inbox?offset=100")).json();expect(second.conversations).toHaveLength(2);expect(second.hasMore).toBe(false);
+    const search=await(await request("/inbox?q=1100")).json();expect(search.conversations.map((c:{chat_id:string})=>c.chat_id)).toEqual(["1100"]);
+    expect((await request("/inbox?q=42%26owner_id%3Deq.2")).status).toBe(400);
+    expect((await request("/inbox?offset=-1")).status).toBe(400);
+  });
+  it("keeps identical chat IDs separate across two Business connections owned by the same user",async()=>{
+    await connect(1);await ingest(1,"1");
+    await tenantDb("rpc/tenant_connect","POST",{p_owner:"1",p_connection:"c01",p_enabled:true,p_reply:true});
+    await tenantDb("rpc/tenant_ingest","POST",{p_update:"2",p_connection:"c01",p_chat:"42",p_text:"second connection only",p_telegram:2});
+    const inbox=await(await request("/inbox?q=42")).json();expect(inbox.conversations).toHaveLength(2);
+    expect(inbox.conversations).toEqual(expect.arrayContaining([expect.objectContaining({connection_id:"c1",last_message:"private-for-1"}),expect.objectContaining({connection_id:"c01",last_message:"second connection only"})]));
+    const view=await(await request("/messages?connection=c01&chat=42")).json();expect(view.messages.map((m:{body:string})=>m.body)).toEqual(["second connection only"]);
+    const reply=await request("/reply",1,"POST",{connection:"c01",chat:"42",text:"Second connection"});expect(reply.status).toBe(200);expect(sent).toEqual([expect.objectContaining({business_connection_id:"c01",chat_id:"42"})]);
+  });
+  it("paginates message IDs without repeating or skipping entries when new messages arrive",async()=>{
+    await connect(1);await ingest(1,"1");
+    await db.exec("insert into tenant_messages(owner_id,connection_id,chat_id,direction,body) select '1','c1','42','incoming','message-'||n from generate_series(1,104) n");
+    const page=await(await request("/messages?connection=c1&chat=42")).json();expect(page.messages).toHaveLength(100);expect(page.hasMore).toBe(true);
+    await ingest(1,"999");
+    const older=await(await request(`/messages?connection=c1&chat=42&before=${page.nextBefore}`)).json();expect(older.messages).toHaveLength(5);expect(older.hasMore).toBe(false);
+    const ids=[...older.messages,...page.messages].map((m:{id:number})=>m.id);expect(new Set(ids).size).toBe(105);expect(ids).toEqual([...ids].sort((a,b)=>a-b));
+    expect((await request("/messages?connection=c1&chat=42&before=bad")).status).toBe(400);
+    expect((await request("/messages?connection=c1&chat=42&limit=10000")).status).toBe(400);
+  });
+  it("cleanup removes previews and history but leaves owned conversations replyable while auto-reply is paused",async()=>{
+    await connect(1);await ingest(1,"1");
+    const result=await(await request("/history",1,"DELETE",undefined,{"x-confirm-inbox-cleanup":"DELETE_STORED_COPIES_ONLY"})).json();expect(result.deletedCount).toBe(1);
+    const inbox=await(await request("/inbox")).json();expect(inbox.conversations).toHaveLength(1);expect(inbox.conversations[0].last_message).toBeNull();
+    expect((await(await request("/messages?connection=c1&chat=42")).json()).messages).toEqual([]);
+    await db.exec("update tenant_accounts set enabled=false where owner_id='1'");
+    const reply=await(await request("/reply",1,"POST",{connection:"c1",chat:"42",text:"After cleanup"})).json();
+    expect(reply).toMatchObject({sent:true,stored:true,message:{body:"After cleanup",direction:"outgoing"}});expect(sent).toHaveLength(1);
+  });
+  it("reports successful delivery even when storing the outgoing copy fails",async()=>{
+    await connect(1);await ingest(1,"1");brokenMessageWrites=true;
+    const reply=await(await request("/reply",1,"POST",{connection:"c1",chat:"42",text:"Only once"})).json();
+    expect(reply).toMatchObject({sent:true,stored:false,message:null});expect(sent).toHaveLength(1);
+  });
+  it("fails closed on storage errors without sending or claiming cleanup",async()=>{
+    await connect(1);await ingest(1,"1");brokenStorage=true;
+    expect((await request("/inbox")).status).toBe(503);
+    expect((await request("/messages?connection=c1&chat=42")).status).toBe(503);
+    expect((await request("/history",1,"DELETE",undefined,{"x-confirm-inbox-cleanup":"DELETE_STORED_COPIES_ONLY"})).status).toBe(503);
+    expect((await request("/reply",1,"POST",{connection:"c1",chat:"42",text:"No"})).status).toBe(503);expect(sent).toEqual([]);
+    expect((await db.query("select * from tenant_messages")).rows).toHaveLength(1);
+  });
+  it("requires signed identity for every inbox action",async()=>{
+    for(const [path,method] of [["/inbox","GET"],["/messages?connection=c1&chat=42","GET"],["/history","DELETE"],["/reply","POST"]]){
+      const response=await nativeFetch(base+"/api/user"+path,{method,headers:{"x-owner-id":"1"}});expect(response.status).toBe(401);
+    }
+    expect(sent).toEqual([]);
   });
 });

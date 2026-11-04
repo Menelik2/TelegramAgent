@@ -17,6 +17,7 @@ beforeEach(()=>{
     const path=new URL(input,"https://app.test").pathname;
     if(path==="/api/user/me"&&profileFailure)return json({error:"Reopen the dashboard in Telegram to sign in again."},401);
     if(path==="/api/user/me")return json({account,connections:[{id:"c1",enabled:true,can_reply:true}],jobs:[],usage:[]});
+    if(path==="/api/user/ai-key")return json({configured:false});
     if(path==="/api/user/inbox")return inboxFailure?json({error:"Inbox unavailable"},503):json({conversations:[]});
     if(path==="/api/user/automation"||path==="/api/user/settings"){
       const body=JSON.parse(String(init.body));writes.push({path,body});
@@ -32,7 +33,7 @@ beforeEach(()=>{
   }));
 });
 afterEach(()=>{cleanup();Reflect.deleteProperty(window,"Telegram");vi.unstubAllGlobals();vi.restoreAllMocks();});
-async function open(){render(<TenantApp/>);await screen.findByRole("checkbox",{name:"Enable automatic replies"});}
+async function open(){render(<TenantApp/>);fireEvent.click(screen.getByRole("button",{name:"Auto-reply & settings"}));await screen.findByRole("checkbox",{name:"Enable automatic replies"});}
 
 describe("private user automatic reply controls",()=>{
   it("requires consent and persists activation immediately without saving preferences",async()=>{
@@ -78,7 +79,7 @@ describe("private user automatic reply controls",()=>{
   it("keeps confirmed activation independent of inbox refresh errors",async()=>{
     await open();inboxFailure=true;agree();fireEvent.click(toggle());
     await screen.findByText("Auto-reply on");
-    await waitFor(()=>expect(screen.getByRole("status").textContent).toContain("Automatic replies enabled"));
+    await waitFor(()=>expect(screen.getByText(/Automatic replies enabled for new messages/)).toBeTruthy());
     expect(screen.queryByText("Inbox unavailable")).toBeNull();
   });
 });

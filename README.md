@@ -193,14 +193,32 @@ The following are still deployment/product limitations and require environment-s
 
 For independent users with Telegram controls and a private web dashboard, see
 [Multi-user setup](docs/MULTI-USER-SETUP.md). This feature defaults off and requires
-its migration, an authenticated queue worker and Telegram account connections.
+the multi-user schema and authorized Telegram Business connections. By default,
+webhooks schedule queued replies; only explicit external worker mode requires a separate worker.
 Do not distribute the administrator token or add customers to the global owner list.
 
+
+### Private Workspace / Inbox
+
+Open `/dashboard` **from the Telegram bot**. Inbox opens first. Search by numeric
+chat ID, select a conversation, load older messages, or write a manual reply.
+On a phone, the back arrow returns to the chat list. Drafts stay in memory per
+connection and chat while the dashboard is open. **Auto-reply & settings** contains
+consent, activation, reply preferences, personal keys and optional support access.
+**Reply activity** shows the account’s delivery jobs.
+
+The list is scoped to the signed-in owner and shows the Business connection for
+each chat. Previews come from the latest stored message; no new contact names,
+usernames or permanent message snippets are collected. **Clear database copies**
+removes this owner’s saved text and cancels queued replies. Conversation IDs stay
+available, and Telegram originals are unaffected. A manual reply can be sent while
+automation is paused, subject to current Telegram permissions and the reply budget.
+The inbox changes use the existing multi-user schema and add no migration.
 
 ### Per-user Gemini API keys (multi-user mode)
 
 Connected Telegram Business users can open **/dashboard** in the bot and add their own
-Gemini API key in **Your Gemini API key**. Each key is encrypted server-side with
+Gemini API key under **Auto-reply & settings → Your Gemini API key**. Each key is encrypted server-side with
 AES-256-GCM, bound to the authenticated Telegram owner ID, and is never returned
 by the API. A user can replace or delete their own key. If no personal key exists,
 the agent uses the operator's configured provider.

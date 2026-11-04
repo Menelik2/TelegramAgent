@@ -4,7 +4,7 @@ import { Router, type Request, type Response } from "express";
 import { timingSafeEqual } from "node:crypto";
 import { telegramAccount } from "./tenant-auth.js";
 import { multiUserEnabled, saveTenantSettings, TenantActivationError, telegramCall, verifyTenantConnection } from "./tenant-agent.js";
-import { tenantAccount, tenantBudget, tenantDb, tenantThread, eq, type TenantJob } from "./tenant-store.js";
+import { tenantAccount, tenantBudget, tenantDb, eq, type TenantJob, type TenantMessage } from "./tenant-store.js";
 import { safeText } from "./policy.js";
 import { tenantCredentialStatus, saveTenantCredential, deleteTenantCredential } from "./tenant-credentials.js";
 
@@ -70,12 +70,25 @@ tenantRouter.put("/settings", route(async (req, res) => {
 tenantRouter.get("/inbox", route(async (req, res) => {
   const offset = Number(req.query.offset || 0);
   if (!Number.isSafeInteger(offset) || offset < 0) return res.status(400).json({ error: "Invalid page." });
-  const conversations = await tenantDb(`tenant_conversations?owner_id=${eq(owner(res))}&order=last_at.desc,connection_id.asc,chat_id.asc&limit=100&offset=${offset}`);
-  return res.json({ conversations });
+  const search = String(req.query.q || "").trim();
+  if (search && !/^\d{1,20}$/.test(search)) return res.status(400).json({ error: "Search using a numeric chat ID." });
+  type InboxRow = { owner_id: string; connection_id: string; chat_id: string; last_at: string; tenant_messages: Pick<TenantMessage,"body"|"direction"|"created_at">[] };
+  // The composite foreign key includes owner + connection + chat. Previews come from
+  // removable copies, never from additional permanent personal-data storage.
+  const rows = await tenantDb<InboxRow[]>(`tenant_conversations?select=owner_id,connection_id,chat_id,last_at,tenant_messages(body,direction,created_at)&owner_id=${eq(owner(res))}${search ? `&chat_id=like.*${search}*` : ""}&order=last_at.desc,connection_id.asc,chat_id.asc&limit=101&offset=${offset}&tenant_messages.order=id.desc&tenant_messages.limit=1`);
+  const conversations = rows.slice(0,100).map(({ tenant_messages, ...conversation }) => ({
+    ...conversation, last_message: tenant_messages[0]?.body.slice(0,160) ?? null,
+    last_direction: tenant_messages[0]?.direction ?? null, last_message_at: tenant_messages[0]?.created_at ?? null
+  }));
+  return res.json({ conversations, hasMore: rows.length > 100, nextOffset: rows.length > 100 ? offset + 100 : null });
 }));
 tenantRouter.get("/messages", route(async (req, res) => {
   const connection = String(req.query.connection || ""), chat = String(req.query.chat || "");
-  return res.json({ messages: (await tenantThread(owner(res),connection,chat,100)).reverse() });
+  const before = String(req.query.before || ""), limit = Number(req.query.limit || 100);
+  if (!connection || connection.length > 256 || !/^\d{1,20}$/.test(chat) || !Number.isInteger(limit) || limit < 1 || limit > 100 || (before && (!/^[1-9]\d{0,18}$/.test(before) || BigInt(before) > 9223372036854775807n))) return res.status(400).json({ error: "Invalid conversation or message page." });
+  const rows = await tenantDb<TenantMessage[]>(`tenant_messages?owner_id=${eq(owner(res))}&connection_id=${eq(connection)}&chat_id=${eq(chat)}${before ? `&id=lt.${before}` : ""}&order=id.desc&limit=${limit+1}`);
+  const messages = rows.slice(0,limit).reverse();
+  return res.json({ messages, hasMore: rows.length > limit, nextBefore: rows.length > limit ? String(messages[0].id) : null });
 }));
 tenantRouter.delete("/history", route(async (req, res) => {
   if (req.header("x-confirm-inbox-cleanup") !== "DELETE_STORED_COPIES_ONLY") return res.status(400).json({ error: "Confirmation required." });
@@ -95,9 +108,9 @@ tenantRouter.post("/reply", route(async (req, res) => {
   if (!(await verifyTenantConnection(id,connection))) return res.status(403).json({ error: "Connection disabled or reply permission revoked." });
   if (!(await tenantBudget(id))) return res.status(429).json({ error: "Daily reply budget reached." });
   const result=await telegramCall<{message_id:number}>("sendMessage",{ business_connection_id:connection,chat_id:chat,text });
-  let stored=true;
-  try { await tenantDb("tenant_messages","POST",{owner_id:id,connection_id:connection,chat_id:chat,direction:"outgoing",body:text,telegram_id:result.message_id}); } catch { stored=false; }
-  return res.json({ok:true,sent:true,stored});
+  let message: TenantMessage | null = null;
+  try { message = (await tenantDb<TenantMessage[]>("tenant_messages","POST",{owner_id:id,connection_id:connection,chat_id:chat,direction:"outgoing",body:text,telegram_id:result.message_id}))[0] ?? null; } catch { /* Telegram delivery already succeeded. Never encourage a duplicate send. */ }
+  return res.json({ok:true,sent:true,stored:message!==null,message});
 }));
 
 export async function tenantWorker(req: Request, res: Response) {

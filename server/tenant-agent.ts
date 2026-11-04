@@ -1,5 +1,4 @@
 import { checkOperationDeadline, operationSignal, withoutOperationDeadline } from "./operation-deadline.js";
-import { sleep } from "./features.js";
 import { tenantCredential, tenantCredentialStatus } from "./tenant-credentials.js";
 import { tenantWorkerMode } from "./tenant-worker-config.js";
 import { generateReply, isAiConfigured } from "./ai.js";
@@ -175,9 +174,8 @@ export async function processTenantJob(job: TenantJob): Promise<void> {
     const message = messages[0];
     if (!message || !account.consent_at || !decideReply({ enabled: account.enabled, allowedContact: true, text: message.body, duplicate: false }).allowed) { await tenantFinish(job, "cancelled"); return; }
     if (!(await verifyTenantConnection(job.owner_id, job.connection_id))) { await tenantFinish(job, "cancelled"); return; }
-    // Human-like pause for tenant replies. Keep the job processing until the delay finishes.
-    // Recheck the account after waiting so a user can pause replies during this window.
-    await sleep(10_000);
+    // tenant_claim_job enforces available_at (the 10-second queue delay).
+    // Do not wait twice. Recheck a pause after the live connection check.
     checkOperationDeadline();
     if (!(await tenantAccount(job.owner_id)).enabled) { await tenantFinish(job, "cancelled"); return; }
     if (!(await tenantBudget(job.owner_id))) { await tenantFinish(job, "failed"); return; }

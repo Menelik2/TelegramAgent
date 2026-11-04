@@ -22,8 +22,9 @@ const route = (handler: (req: Request, res: Response) => Promise<unknown>) => (r
 };
 tenantRouter.get("/me", route(async (_req, res) => {
   const id = owner(res);
+  // A verified Mini App launch may precede /start. Registration grants no consent or access.
   const [account, connections, usage, recent, blocked] = await Promise.all([
-    tenantAccount(id), tenantDb(`tenant_connections?owner_id=${eq(id)}`),
+    tenantAccount(id, true), tenantDb(`tenant_connections?owner_id=${eq(id)}`),
     tenantDb(`tenant_daily_usage?owner_id=${eq(id)}&order=day.desc&limit=1`),
     tenantDb<TenantJob[]>(`tenant_jobs?select=update_id,status,chat_id,created_at&owner_id=${eq(id)}&order=created_at.desc&limit=20`),
     tenantDb<TenantJob[]>(`tenant_jobs?select=update_id,status,chat_id,created_at&owner_id=${eq(id)}&status=eq.uncertain&order=created_at.asc&limit=1000`)

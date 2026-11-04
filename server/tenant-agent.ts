@@ -1,5 +1,6 @@
 import { generateReply, isAiConfigured } from "./ai.js";
 import { decideReply, safeText } from "./policy.js";
+import { tenantDashboardUrl } from "./tenant-dashboard.js";
 import { tenantAccount, tenantBudget, tenantDb, tenantFinish, tenantThread, eq, type TenantAccount, type TenantConnection, type TenantJob, type TenantMessage } from "./tenant-store.js";
 
 export const multiUserEnabled = () => process.env.MULTI_USER_ENABLED === "true";
@@ -103,13 +104,21 @@ export async function tenantControls(owner: string, text: string): Promise<void>
       const count = await tenantDb<number>("rpc/tenant_clear_history", "POST", { p_owner: owner });
       response = `Cleared ${count} stored message copies and cancelled queued replies. Conversation IDs remain. Original Telegram messages are unchanged.`;
     } else response = "Send /clearhistory confirm to erase only your stored message copies and cancel queued replies. Original Telegram messages stay unchanged. An in-progress send may still complete.";
-  } else if (command === "/dashboard") response = "Open your private dashboard below. Your Telegram account signs you in automatically.";
-  const appUrl = process.env.APP_BASE_URL?.replace(/\/$/, "");
+  }
+  const account = await tenantAccount(owner);
+  const dashboardUrl = tenantDashboardUrl();
+  if (command === "/dashboard") {
+    response = `Your private dashboard\n\nAuto-reply: ${account.enabled ? "on" : "paused"}.\nUse the buttons below to control automatic replies for your selected Telegram chats.`;
+    if (!account.consent_at) response += "\n\nEnable AI (consent) agrees to send selected incoming message text to the configured AI provider and store copies for up to 7 days while the worker runs, or until you clear them sooner. Connect the bot and allow replies in Telegram first.";
+    response += dashboardUrl
+      ? "\n\nOpen my dashboard shows your private inbox, preferences and reply jobs. Telegram signs you in automatically."
+      : "\n\nThe web dashboard URL is not configured. You can still use these Telegram controls. Ask the operator to configure the HTTPS dashboard address.";
+  }
   const controls: Array<Array<Record<string, unknown>>> = [
-    [{ text: "Enable AI (consent)", callback_data: "tenant:enable" }, { text: "Pause", callback_data: "tenant:pause" }],
+    [account.enabled ? { text: "Pause automatic replies", callback_data: "tenant:pause" } : { text: "Enable AI (consent)", callback_data: "tenant:enable" }],
     [{ text: "Status", callback_data: "tenant:status" }, { text: "Clear copies…", callback_data: "tenant:clearhistory" }]
   ];
-  if (appUrl?.startsWith("https://")) controls.unshift([{ text: "Open my dashboard", web_app: { url: appUrl + "/my-agent" } }]);
+  if (dashboardUrl) controls.unshift([{ text: "Open my dashboard", web_app: { url: dashboardUrl } }]);
   await telegramCall("sendMessage", {
     chat_id: owner, text: response,
     reply_markup: { inline_keyboard: controls }

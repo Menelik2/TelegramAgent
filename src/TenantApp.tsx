@@ -10,7 +10,9 @@ export default function TenantApp() {
   const [profile,setProfile]=useState<Profile|null>(null), [conversations,setConversations]=useState<Conversation[]>([]), [selected,setSelected]=useState<Conversation|null>(null), [messages,setMessages]=useState<Message[]>([]);
   const [tone,setTone]=useState("friendly, respectful, concise"), [language,setLanguage]=useState("match the sender"), [consent,setConsent]=useState(false), [draft,setDraft]=useState("");
   const [page,setPage]=useState(0);
+  const [statusError,setStatusError]=useState("");
   const actionPending=useRef(false), profileRequest=useRef(0);
+  const hasProfile=profile!==null;
   useEffect(()=>{
     const ready=()=>{
       const app=(window as TelegramWindow).Telegram?.WebApp;
@@ -30,10 +32,29 @@ export default function TenantApp() {
     const request=++profileRequest.current;
     const p:Profile=await api("/me");
     if(request!==profileRequest.current)return;
-    setProfile(p);setTone(p.account.tone);setLanguage(p.account.language);
+    setProfile(p);setStatusError("");setTone(p.account.tone);setLanguage(p.account.language);
     const inbox=await api(`/inbox?offset=${page*100}`);setConversations(inbox.conversations);
   },[api,page]);
   useEffect(()=>{if(auth)void refresh().catch(e=>setNotice(e.message));},[auth,refresh]);
+  useEffect(()=>{
+    if(!auth||!hasProfile)return;
+    let cancelled=false, pending=false;
+    const syncStatus=async()=>{
+      if(document.visibilityState==="hidden"||actionPending.current||pending)return;
+      pending=true;
+      const request=++profileRequest.current;
+      try {
+        const p:Profile=await api("/me");
+        if(!cancelled&&request===profileRequest.current){setProfile(p);setStatusError("");}
+      } catch(error) {
+        if(!cancelled&&request===profileRequest.current)setStatusError(error instanceof Error?error.message:"Could not refresh auto-reply status.");
+      } finally {pending=false;}
+    };
+    const sync=()=>void syncStatus();
+    const timer=window.setInterval(sync,30000);
+    window.addEventListener("focus",sync);document.addEventListener("visibilitychange",sync);
+    return()=>{cancelled=true;window.clearInterval(timer);window.removeEventListener("focus",sync);document.removeEventListener("visibilitychange",sync);};
+  },[auth,api,hasProfile]);
   useEffect(()=>{
     if(!selected||!auth) {setMessages([]);return;}
     let cancelled=false;
@@ -52,12 +73,14 @@ export default function TenantApp() {
     const result=await api("/automation","PUT",{enabled,consent});
     ++profileRequest.current;
     setProfile(current=>current?{...current,account:result.account}:current);
+    setStatusError("");
     setNotice(result.warning||(result.account.enabled
       ?"Automatic replies enabled for new messages in your selected Telegram chats."
       :"Automatic replies paused. Queued replies cancelled; a send already in progress may finish."));
   });
-  return <div className="tenant-app"><header className="tenant-header"><div><span className="tenant-kicker">YOUR TELEGRAM ASSISTANT</span><h1>My agent</h1><p>Your account. Your conversations. Your controls.</p></div><span className={"tenant-badge "+(profile?.account.enabled?"active":"")}>{profile?.account.enabled?"Auto-reply on":"Paused"}</span></header>
+  return <div className="tenant-app"><header className="tenant-header"><div><span className="tenant-kicker">YOUR TELEGRAM ASSISTANT</span><h1>My agent</h1><p>Your account. Your conversations. Your controls.</p></div><span className={"tenant-badge "+(!statusError&&profile?.account.enabled?"active":"")}>{statusError?"Status unavailable":!profile?"Sign-in required":profile.account.enabled?"Auto-reply on":"Paused"}</span></header>
     {notice&&<div className="tenant-notice" role="status">{notice}</div>}
+    {statusError&&<div className="tenant-notice" role="alert">Auto-reply status could not be refreshed. {statusError}</div>}
     {!profile?<section className="tenant-card"><h2>Private sign-in</h2><p>Use the dashboard button in your bot chat. Telegram signs you in without a shared password or administrator token.</p></section>:<>
       <div className="tenant-stats"><section className="tenant-card"><small>Signed-in account</small><b>{profile.account.owner_id}</b></section><section className="tenant-card"><small>Connected accounts</small><b>{profile.connections.filter(c=>c.enabled&&c.can_reply).length}</b></section><section className="tenant-card"><small>Reply attempts · {profile.usage[0]?.day||"today"}</small><b>{profile.usage[0]?.used||0}</b></section></div>
       <div className="tenant-grid"><section className="tenant-card"><h2>Automatic replies</h2>

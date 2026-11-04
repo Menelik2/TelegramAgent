@@ -98,7 +98,7 @@ beforeAll(async()=>{
 beforeEach(async()=>{
   await db.exec("truncate tenant_accounts,tenant_connections,tenant_conversations,tenant_messages,tenant_jobs,tenant_daily_usage,tenant_control_updates cascade");
   sent=[];revoked=brokenStorage=uncertainSend=brokenAccountWrites=brokenJobWrites=brokenConnectionWrites=false;
-  unavailableConnections.clear();vi.mocked(isAiConfigured).mockReturnValue(true);vi.stubEnv("CRON_SECRET","x".repeat(40));
+  unavailableConnections.clear();vi.mocked(isAiConfigured).mockReturnValue(true);vi.stubEnv("CRON_SECRET","x".repeat(40));vi.stubEnv("APP_BASE_URL","https://app.test");vi.stubEnv("VERCEL_URL","");
   vi.mocked(generateReply).mockReset().mockResolvedValue("Test reply");
 });
 afterAll(async()=>{if(server)await new Promise<void>(resolve=>server.close(()=>resolve()));if(db)await db.close();vi.unstubAllGlobals();vi.unstubAllEnvs();});
@@ -324,5 +324,38 @@ describe("automatic reply activation",()=>{
     const response=await nativeFetch(base+"/api/tenant-worker",{headers:{authorization:"Bearer "+"x".repeat(40)}});
     expect(response.status).toBe(200);expect((await response.json()).processed).toBe(1);
     expect(sent).toHaveLength(1);expect(sent[0]).toMatchObject({business_connection_id:"c1",chat_id:"42",text:"Test reply"});
+  });
+});
+
+
+describe("private /dashboard flow",()=>{
+  it("opens a fresh signed-in account without implicitly enabling processing",async()=>{
+    const result=await request("/me");expect(result.status).toBe(200);
+    expect((await result.json()).account).toMatchObject({owner_id:"1",enabled:false,consent_at:null});
+    expect((await db.query("select * from tenant_connections")).rows).toHaveLength(0);
+    expect((await db.query("select * from tenant_messages")).rows).toHaveLength(0);
+    expect((await request("/automation",1,"PUT",{enabled:true,consent:true})).status).toBe(409);
+    await nativeFetch(base+"/api/user/me",{headers:{"x-owner-id":"2"}});
+    expect((await db.query("select * from tenant_accounts")).rows).toHaveLength(1);
+  });
+  it("shows saved status and a signed-in Mini App button from /dashboard",async()=>{
+    await connect(1);
+    await tenantWebhook({update_id:500,message:{chat:{type:"private",id:1},from:{id:1},text:"/dashboard@TestBot"}});
+    expect(sent[0]).toMatchObject({chat_id:"1",text:expect.stringContaining("Auto-reply: on"),reply_markup:{inline_keyboard:expect.arrayContaining([
+      [{text:"Open my dashboard",web_app:{url:"https://app.test/dashboard"}}],
+      [{text:"Pause automatic replies",callback_data:"tenant:pause"}]
+    ])}});
+    expect(JSON.stringify(sent[0])).not.toContain('tenant:enable');
+  });
+  it("offers working Telegram controls with honest guidance when no web URL exists",async()=>{
+    vi.stubEnv("APP_BASE_URL","");await connect(1,false);
+    await tenantControls("1","/dashboard");
+    expect(sent[0].text).toContain("web dashboard URL is not configured");
+    expect(sent[0].text).toContain("configured AI provider");
+    expect(JSON.stringify(sent[0])).not.toContain('web_app');
+    expect(JSON.stringify(sent[0])).toContain('tenant:enable');
+    await tenantWebhook({update_id:501,callback_query:{id:"enable-from-dashboard",from:{id:1},message:{chat:{type:"private",id:1}},data:"tenant:enable"}});
+    await tenantControls("1","/dashboard");
+    expect(sent[2].text).toContain("Auto-reply: on");
   });
 });

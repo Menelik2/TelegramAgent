@@ -1,20 +1,21 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TenantApp from "./TenantApp";
 
 type Account={owner_id:string;enabled:boolean;consent_at:string|null;tone:string;language:string};
-let account:Account, writes:{path:string;body:Record<string,unknown>}[], failure:string, inboxFailure:boolean;
+let account:Account, writes:{path:string;body:Record<string,unknown>}[], failure:string, inboxFailure:boolean, profileFailure:boolean;
 let hold:Promise<void>|undefined;
 const json=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers:{"content-type":"application/json"}});
 const toggle=()=>screen.getByRole("checkbox",{name:"Enable automatic replies"}) as HTMLInputElement;
 const agree=()=>fireEvent.click(screen.getByRole("checkbox",{name:/I agree to send/}));
 beforeEach(()=>{
-  account={owner_id:"1",enabled:false,consent_at:null,tone:"friendly",language:"Amharic"};writes=[];failure="";inboxFailure=false;hold=undefined;
+  account={owner_id:"1",enabled:false,consent_at:null,tone:"friendly",language:"Amharic"};writes=[];failure="";inboxFailure=false;profileFailure=false;hold=undefined;
   Object.defineProperty(window,"Telegram",{configurable:true,value:{WebApp:{initData:"signed-test-session",ready:vi.fn(),expand:vi.fn()}}});
   vi.stubGlobal("fetch",vi.fn(async(input:string,init:RequestInit={})=>{
     expect((init.headers as Record<string,string>)["x-telegram-init-data"]).toBe("signed-test-session");
     const path=new URL(input,"https://app.test").pathname;
+    if(path==="/api/user/me"&&profileFailure)return json({error:"Reopen the dashboard in Telegram to sign in again."},401);
     if(path==="/api/user/me")return json({account,connections:[{id:"c1",enabled:true,can_reply:true}],jobs:[],usage:[]});
     if(path==="/api/user/inbox")return inboxFailure?json({error:"Inbox unavailable"},503):json({conversations:[]});
     if(path==="/api/user/automation"||path==="/api/user/settings"){
@@ -79,5 +80,31 @@ describe("private user automatic reply controls",()=>{
     await screen.findByText("Auto-reply on");
     await waitFor(()=>expect(screen.getByRole("status").textContent).toContain("Automatic replies enabled"));
     expect(screen.queryByText("Inbox unavailable")).toBeNull();
+  });
+});
+
+
+describe("dashboard auto-reply status synchronization",()=>{
+  it("updates a Telegram-side pause when returning to the dashboard without erasing drafts",async()=>{
+    account.enabled=true;account.consent_at="2026-11-04";await open();
+    fireEvent.change(screen.getByRole("textbox",{name:"Reply tone"}),{target:{value:"unsaved tone"}});
+    account={...account,enabled:false};fireEvent(window,new Event("focus"));
+    await screen.findByText("Paused");expect(toggle().checked).toBe(false);
+    expect((screen.getByRole("textbox",{name:"Reply tone"}) as HTMLInputElement).value).toBe("unsaved tone");
+    expect(writes).toHaveLength(0);
+  });
+  it("marks status unavailable when the Telegram session expires",async()=>{
+    account.enabled=true;account.consent_at="2026-11-04";await open();profileFailure=true;
+    fireEvent(window,new Event("focus"));await screen.findByText("Status unavailable");
+    expect(screen.getByRole("alert").textContent).toContain("Reopen the dashboard in Telegram");
+    expect(screen.queryByText("Auto-reply on")).toBeNull();
+    profileFailure=false;fireEvent(window,new Event("focus"));await screen.findByText("Auto-reply on");
+  });
+  it("does not overwrite a successful activation with an older status response",async()=>{
+    await open();agree();const old={...account};let release!:(r:Response)=>void;
+    vi.mocked(fetch).mockImplementationOnce(()=>new Promise(resolve=>{release=resolve;}));
+    fireEvent(window,new Event("focus"));fireEvent.click(toggle());await screen.findByText("Auto-reply on");
+    await act(async()=>{release(json({account:old,connections:[],jobs:[],usage:[]}));});
+    expect(toggle().checked).toBe(true);expect(screen.getByText("Auto-reply on")).toBeTruthy();
   });
 });

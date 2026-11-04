@@ -16,8 +16,12 @@ export async function tenantDb<T>(path: string, method = "GET", body?: unknown):
   const text = await response.text();
   return (text ? JSON.parse(text) : null) as T;
 }
-export async function tenantAccount(owner: string): Promise<TenantAccount> {
+export async function tenantAccount(owner: string, registerIfMissing = false): Promise<TenantAccount> {
   const rows = await tenantDb<TenantAccount[]>("tenant_accounts?owner_id=" + eq(owner));
+  if (!rows[0] && registerIfMissing) {
+    await tenantDb("rpc/tenant_register", "POST", { p_owner: owner });
+    return tenantAccount(owner);
+  }
   if (!rows[0]) throw new Error("Connect your account and send /start to the bot first.");
   return rows[0];
 }

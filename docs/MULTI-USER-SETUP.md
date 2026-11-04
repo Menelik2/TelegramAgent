@@ -19,7 +19,9 @@ Official references:
    separate tables and functions; it does not delete or migrate legacy history.
    The earlier inbox migration is still required for the legacy admin inbox.
 2. In BotFather, enable Business/Secretary support and configure your Mini App
-   for `https://YOUR_DOMAIN/my-agent`. Set `APP_BASE_URL` to your HTTPS domain.
+   for `https://YOUR_DOMAIN/dashboard`. Set `APP_BASE_URL` to your HTTPS domain.
+   Existing `/my-agent` links remain supported. If `APP_BASE_URL` is absent, the
+   bot uses Vercel deployment metadata; it never trusts a request Host header.
 3. Configure `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `TELEGRAM_BOT_TOKEN`,
    `TELEGRAM_WEBHOOK_SECRET`, your existing AI credentials, and a randomly
    generated `CRON_SECRET` of at least 32 characters. Never expose these to users.
@@ -50,16 +52,24 @@ Official references:
 - Inline buttons also provide enable, pause, status and cleanup controls.
 - `/pause`: cancel pending/processing replies. A send already in progress may finish.
 - `/status`: saved account status; current rights are checked again before sends.
-- `/dashboard`: private web dashboard opened as a Telegram Mini App. Telegram's
+- `/dashboard`: shows your saved auto-reply status and Enable/Pause controls in
+  Telegram, plus a private web dashboard button when a valid HTTPS URL exists.
+  Without that URL, Telegram controls still work and explain the missing setup.
+  The web dashboard opens as a Telegram Mini App. Telegram's
   signed data authenticates the account; no shared admin token is used. The
   dashboard works inside Telegram on supported mobile/desktop clients. Opening
-  the URL in an ordinary browser alone is not a login method.
+  the URL in an ordinary browser alone is not a login method. A verified first
+  visit can create a paused account before `/start`; it does not grant consent
+  or any connection permissions.
 - Dashboard: agree to AI processing, then turn on **Enable automatic replies**. The
   switch saves immediately and reflects the server-confirmed state. **Save
   preferences** changes only tone/language; it cannot accidentally enable or
   pause automation. **Pause now** also works with incomplete preference fields.
   Private inbox, manual replies, cleanup and recent queue outcomes remain
-  available. Reopen after the one-hour signed-session expiry.
+  available. Saved status and reply jobs refresh every 30 seconds while visible
+  and when returning to the dashboard, without resetting unsaved preferences.
+  A failed refresh displays unavailable status rather than claiming auto-reply
+  is still on. Reopen after the one-hour signed-session expiry.
 - Dashboard and Telegram controls share activation checks. Missing AI credentials,
   missing worker authentication configuration, absent connections and revoked
   reply rights produce actionable errors. Setting a worker secret does not prove
@@ -132,3 +142,8 @@ simulated webhook/worker flow. React interaction tests run in jsdom. These check
 are not real Telegram client or visual browser testing; no Chromium binary was
 available in the implementation environment. See GitHub Actions for validation
 of each pushed commit.
+
+Browser interaction tests use pinned jsdom 26.1.0, which supports the Node 20
+runtime declared by the project. CI validates both Node 20 and Node 24. This
+avoids the newer jsdom/Undici dependency combination that failed before browser
+tests could start under Node 20; no tests are skipped to work around it.

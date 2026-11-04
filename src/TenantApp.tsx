@@ -3,7 +3,7 @@ import "./tenant.css";
 
 type Conversation = { connection_id: string; chat_id: string; last_at: string };
 type Message = { id: number; body: string; direction: string; created_at: string };
-type Profile = { account: { owner_id: string; enabled: boolean; consent_at: string | null; tone: string; language: string }; connections: { id: string; enabled: boolean; can_reply: boolean }[]; jobs: { update_id: string; status: string; chat_id: string }[]; usage: { day: string; used: number }[] };
+type Profile = { account: { owner_id: string; enabled: boolean; consent_at: string | null; tone: string; language: string; admin_inbox_access?: boolean }; connections: { id: string; enabled: boolean; can_reply: boolean }[]; jobs: { update_id: string; status: string; chat_id: string }[]; usage: { day: string; used: number }[] };
 type TelegramWindow = Window & { Telegram?: { WebApp?: { initData: string; ready(): void; expand(): void } } };
 export default function TenantApp() {
   const [auth,setAuth]=useState(""), [notice,setNotice]=useState("Opening your secure Telegram session…"), [busy,setBusy]=useState(false);
@@ -113,6 +113,13 @@ export default function TenantApp() {
         setProfile(current=>current?{...current,account:result.account}:current);
         setNotice("Reply preferences saved.");
       })}>Save preferences</button>
+      <hr/><h3>Administrator support access</h3>
+      <p>Your private inbox is visible only to you unless you explicitly allow the administrator to read stored message copies for support. You can revoke access at any time. Administrator access is read-only and logged; it does not grant permission to send messages.</p>
+      <label className="tenant-toggle"><input type="checkbox" checked={profile.account.admin_inbox_access === true} disabled={busy} onChange={e=>void act(async()=>{
+        const result=await api("/admin-inbox-access","PUT",{enabled:e.target.checked});
+        setProfile(current=>current?{...current,account:{...current.account,admin_inbox_access:result.enabled}}:current);
+        setNotice(result.enabled?"Administrator support inbox access enabled.":"Administrator support inbox access revoked.");
+      })}/> Allow administrator to view my stored inbox copies</label>
       <hr/><h3>Your Gemini API key</h3><p>Use your own Gemini 3.5 Flash-Lite API key for your Telegram auto-replies. Your key is encrypted on the server and is never shown again. Leave this empty to use the operator's shared provider.</p>
       <p role="status">{keyConfigured ? "Your private Gemini key is configured." : "No personal API key configured."}</p>
       <label>Gemini API key<input type="password" autoComplete="off" value={ownKey} maxLength={256} onChange={e=>setOwnKey(e.target.value)} placeholder="AIza…" /></label>

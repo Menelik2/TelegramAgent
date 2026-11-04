@@ -401,8 +401,8 @@ export default function App() {
   };
   const clearInboxHistory = async () => {
     if (!dashboardToken || inboxLoading) return;
-    const confirmed = window.confirm("Clear all message copies stored in this app's database? This will NOT delete messages from Telegram. This action cannot be undone.");
-    if (!confirmed) return;
+    const confirmation = window.prompt("Delete ONLY the Telegram Agent database copies of all inbox messages? Original Telegram chats are unaffected. This cannot be undone. Type CLEAR HISTORY to confirm:");
+    if (confirmation !== "CLEAR HISTORY") return;
     setInboxLoading(true);
     try {
       const response = await apiRequest("/api/inbox/history", { method: "DELETE", headers: { "x-confirm-inbox-cleanup": "DELETE_STORED_COPIES_ONLY" } });
@@ -438,7 +438,7 @@ export default function App() {
       <header className="topbar"><div className="crumb">Workspace / <b>{page}</b></div><div className="connection-pill"><span className={"dot " + (status?.telegramConfigured ? "green" : "amber")}></span>{status?.telegramConfigured ? "Telegram connected" : "Telegram not connected"}</div></header>
       <div className="content">
         {page === "Inbox" ? <div className="inbox-page">
-          <div className="page-heading"><div><div className="eyebrow">YOUR CONVERSATIONS</div><h1>Inbox</h1></div><div className="inbox-heading-actions"><button className="secondary-button" onClick={() => void clearInboxHistory()} disabled={inboxLoading || !dashboardToken} title="Delete saved message copies from this app only">Clear stored history</button><button className="secondary-button" onClick={() => void refreshLiveInbox()} disabled={inboxLoading}>{inboxLoading ? "Loading…" : "Refresh"}</button></div></div>
+          <div className="page-heading"><div><div className="eyebrow">YOUR CONVERSATIONS</div><h1>Inbox</h1></div><div className="inbox-heading-actions"><button className="secondary-button" onClick={() => void clearInboxHistory()} disabled={inboxLoading || !dashboardToken} title="Permanently delete only stored message copies in Supabase; original Telegram chats remain untouched">Clear database copies</button><button className="secondary-button" onClick={() => void refreshLiveInbox()} disabled={inboxLoading}>{inboxLoading ? "Loading…" : "Refresh"}</button></div></div>
           <div className="inbox-toolbar"><div className="inbox-count"><b>{filtered.length}</b> <span>conversations</span>{inboxLive ? <span className="live-label"><i/> Live</span> : null}</div><div className="searchbox"><Search size={16}/><input aria-label="Search conversations" placeholder="Search people or usernames…" value={query} onChange={e => setQuery(e.target.value)}/>{query ? <button className="clear-search" onClick={() => setQuery("")} aria-label="Clear search">×</button> : null}</div></div><div className="inbox-layout"><section className={"inbox-list " + (mobileChatOpen ? "mobile-hidden" : "")}>
             <div className="filter-row">
               <button className={inboxFilter === "all" ? "filter-active" : ""} onClick={() => setInboxFilter("all")}>All</button>

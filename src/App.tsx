@@ -241,6 +241,8 @@ export default function App() {
   const [aiSettingsLoading, setAiSettingsLoading] = useState(false);
   const [ownerIds, setOwnerIds] = useState<string[]>([]);
   const [environmentOwners, setEnvironmentOwners] = useState<string[]>([]);
+  const [configuredOwners, setConfiguredOwners] = useState<string[]>([]);
+  const [dashboardOwners, setDashboardOwners] = useState<string[]>([]);
   const [ownerDraft, setOwnerDraft] = useState("");
   const [ownerBusy, setOwnerBusy] = useState(false);
   const [ownerError, setOwnerError] = useState("");
@@ -302,10 +304,12 @@ export default function App() {
       if (!response.ok) throw new Error(data.error || "Could not load owners.");
       setOwnerIds(Array.isArray(data.ownerIds) ? data.ownerIds : []);
       setEnvironmentOwners(Array.isArray(data.environmentOwners) ? data.environmentOwners : []);
+      setConfiguredOwners(Array.isArray(data.configuredOwners) ? data.configuredOwners : []);
+      setDashboardOwners(Array.isArray(data.dashboardOwners) ? data.dashboardOwners : []);
       setOwnerError("");
     } catch (error) { setOwnerError(error instanceof Error ? error.message : "Could not load owners."); }
   };
-  useEffect(() => { if (dashboardToken) void loadOwners(); else { setOwnerIds([]); setEnvironmentOwners([]); } }, [dashboardToken, apiBase]);
+  useEffect(() => { if (dashboardToken) void loadOwners(); else { setOwnerIds([]); setEnvironmentOwners([]); setConfiguredOwners([]); setDashboardOwners([]); } }, [dashboardToken, apiBase]);
   const addOwner = async () => {
     const id = ownerDraft.trim();
     if (!/^[1-9][0-9]{0,19}$/.test(id)) { setOwnerError("Enter a valid numeric Telegram user ID."); return; }
@@ -340,6 +344,7 @@ export default function App() {
       const data = await readJson(response);
       if (!response.ok) throw new Error(data.error || "Could not save owner IDs.");
       setOwnerIdsText((data.ownerIds || ids).join("\n"));
+      await loadOwners();
       flash("Saved " + ids.length + " Telegram Business owner IDs.");
     } catch (error) { setOwnerIdsError(error instanceof Error ? error.message : "Could not save owner IDs."); }
     finally { setOwnerIdsSaving(false); }
@@ -395,13 +400,19 @@ export default function App() {
             </div>
             <div className="integration-row owner-settings">
               <div className="owner-settings-content"><b>Telegram owners</b>
-                <p>Manage multiple authorized Telegram user IDs. Owners configured in Vercel remain protected and cannot be removed here.</p>
+                <p>Manage multiple authorized Telegram user IDs. The source label shows where each owner is managed. Vercel owners are protected; Saved settings owners are edited above; Dashboard owners can be removed here.</p>
                 <div className="owner-add-row">
                   <input className="form-control" inputMode="numeric" aria-label="New Telegram owner ID" placeholder="Numeric Telegram user ID" value={ownerDraft} onChange={e => setOwnerDraft(e.target.value)} />
                   <button className="secondary-button compact" disabled={!dashboardToken || ownerBusy || !ownerDraft.trim()} onClick={() => void addOwner()}>Add owner</button>
                 </div>
                 {ownerError ? <p role="alert" className="helper-text" style={{color:"#f5a5a5"}}>{ownerError}</p> : null}
-                <div className="owner-id-list">{ownerIds.map(id => <div className="owner-id-item" key={id}><code>{id}</code><span>{environmentOwners.includes(id) ? "Vercel" : "Dashboard"}</span>{!environmentOwners.includes(id) ? <button className="secondary-button compact" disabled={ownerBusy} onClick={() => void removeOwner(id)}>Remove</button> : null}</div>)}</div>
+                <div className="owner-id-list">{ownerIds.map(id => {
+                   const fromVercel = environmentOwners.includes(id);
+                   const fromSavedSettings = configuredOwners.includes(id);
+                   const fromDashboard = dashboardOwners.includes(id);
+                   const source = fromVercel ? "Vercel" : fromSavedSettings ? "Saved settings" : fromDashboard ? "Dashboard" : "Authorized";
+                   return <div className="owner-id-item" key={id}><code>{id}</code><span title={fromVercel ? "Configured in Vercel environment variables" : fromSavedSettings ? "Managed in the Telegram Business owners field above" : "Added through the dashboard"}>{source}</span>{fromDashboard && !fromVercel && !fromSavedSettings ? <button className="secondary-button compact" disabled={ownerBusy} onClick={() => void removeOwner(id)}>Remove</button> : null}</div>;
+                 })}</div>
                 {!ownerIds.length && <p className="helper-text">No owners loaded. Configure Supabase and apply the owner IDs migration.</p>}
               </div>
             </div>

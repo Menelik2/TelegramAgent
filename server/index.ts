@@ -8,7 +8,7 @@ import { rateLimit } from "./rate-limit.js";
 import { generateReply, isAiConfigured, AiQuotaError, getAiProviderLabel } from "./ai.js";
 import { getFeatureConfig, isInQuietHours, pickReplyDelayMs, sleep, isSameLocalDay, featureStatusSummary } from "./features.js";
 import { claimUpdate, clearStoredInboxHistory, getLastActivityAt, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, getInboxConversation, recordEvent, recordMessage, releaseUpdate, getAiRuntimeSettings, saveAiRuntimeSettings, parseConversationId, listDashboardOwnerIds, addDashboardOwnerId, removeDashboardOwnerId } from "./store.js";
-import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getPreferences, getOwnerUserIds, saveOwnerUserIds, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setAutomationEnabled, setContact } from "./profile-store.js";
+import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getPreferences, getOwnerUserIds, environmentOwnerIds, saveOwnerUserIds, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setAutomationEnabled, setContact } from "./profile-store.js";
 
 import { multiUserEnabled, tenantWebhook } from "./tenant-agent.js";
 import { scheduleTenantQueue } from "./tenant-queue.js";
@@ -173,7 +173,9 @@ app.get("/api/agent/settings", async (_req, res) => {
 app.get("/api/agent/owners", async (_req, res) => {
   try {
     const additional = isPersistentStoreConfigured() ? await listDashboardOwnerIds() : [];
-    return res.json({ ok: true, environmentOwners: [...(await ownerUserIds())].sort(), dashboardOwners: additional, ownerIds: [...(await getAuthorizedOwnerIds())].sort() });
+    const environmentOwners = environmentOwnerIds();
+    const configuredOwners = await getOwnerUserIds();
+    return res.json({ ok: true, environmentOwners: environmentOwners.sort(), configuredOwners: configuredOwners.sort(), dashboardOwners: additional, ownerIds: [...(await getAuthorizedOwnerIds())].sort() });
   } catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Could not load owners." }); }
 });
 app.post("/api/agent/owners", async (req, res) => {
@@ -191,7 +193,8 @@ app.post("/api/agent/owners", async (req, res) => {
 app.delete("/api/agent/owners/:userId", async (req, res) => {
   const userId = String(req.params.userId || "");
   if (!isTelegramUserId(userId)) return res.status(400).json({ ok: false, error: "Invalid owner ID." });
-  if ((await ownerUserIds()).has(userId)) return res.status(409).json({ ok: false, error: "This owner is configured in Vercel. Remove it from TELEGRAM_OWNER_USER_IDS instead." });
+  if (environmentOwnerIds().includes(userId)) return res.status(409).json({ ok: false, error: "This owner is configured in Vercel. Remove it from TELEGRAM_OWNER_USER_IDS instead." });
+  if ((await getOwnerUserIds()).includes(userId)) return res.status(409).json({ ok: false, error: "This owner is in saved Telegram Business owners. Remove it from that list and save changes first." });
   try {
     await removeDashboardOwnerId(userId);
     await logEvent("owner_removed", "An authorized owner ID was removed in Settings.");

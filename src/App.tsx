@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useWorkspaceInbox } from "./useWorkspaceInbox";
-import { ArrowLeft, Bot, BrainCircuit, ContactRound, Gauge, MessageCircle, Pause, Play, Search, Send, Settings2, ShieldCheck, Sparkles, Zap } from "lucide-react";
+import { ArrowLeft, Bot, BrainCircuit, ContactRound, Users, Gauge, MessageCircle, Pause, Play, Search, Send, Settings2, ShieldCheck, Sparkles, Zap } from "lucide-react";
 
 async function readJson(response: Response): Promise<Record<string, any>> {
   const raw = await response.text();
@@ -19,7 +19,7 @@ async function readJson(response: Response): Promise<Record<string, any>> {
 }
 
 type Status = { ok: boolean; automationEnabled: boolean; telegramConfigured: boolean; aiConfigured: boolean; aiProvider?: string | null; storageConfigured?: boolean; mode: string; lastWebhookAt?: string | null; lastActivityAt?: string | null; appBaseUrl?: string | null; ownerIdsConfigured?: boolean; features?: { replyDelayMs?: { min: number; max: number }; quietHours?: { enabled: boolean; startHour?: number; endHour?: number; timezone?: string }; dailyReplyLimit?: number | null } };
-const nav = [{ label: "Overview", icon: Gauge }, { label: "Inbox", icon: MessageCircle }, { label: "AI personality", icon: Sparkles }, { label: "Contacts", icon: ContactRound }, { label: "Memory", icon: BrainCircuit }, { label: "Automation", icon: Zap }, { label: "Settings", icon: Settings2 }];
+const nav = [{ label: "Overview", icon: Gauge }, { label: "Inbox", icon: MessageCircle }, { label: "Users", icon: Users }, { label: "AI personality", icon: Sparkles }, { label: "Contacts", icon: ContactRound }, { label: "Memory", icon: BrainCircuit }, { label: "Automation", icon: Zap }, { label: "Settings", icon: Settings2 }];
 
 function MemoryPanel({ apiRequest, readJson, flash }: { apiRequest: (path: string, init?: RequestInit) => Promise<Response>; readJson: (r: Response) => Promise<Record<string, any>>; flash: (m: string) => void }) {
   const [items, setItems] = useState<Array<{ id: number; memory: string; category: string; createdAt?: string }>>([]);
@@ -188,6 +188,46 @@ function ContactsPanel({ apiRequest, readJson, flash }: { apiRequest: (path: str
   );
 }
 
+type AdminTenant = { ownerId: string; automationEnabled: boolean; consentGiven: boolean; registeredAt: string; connections: number; readyConnections: number };
+function TenantUsersPanel({ apiRequest }: { apiRequest: (path: string, init?: RequestInit) => Promise<Response> }) {
+  const [users, setUsers] = useState<AdminTenant[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [offset, setOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [enabled, setEnabled] = useState(true);
+  const load = async (nextOffset = 0) => {
+    setLoading(true); setError("");
+    try {
+      const response = await apiRequest("/api/agent/tenant-users?offset=" + nextOffset);
+      const data = await readJson(response);
+      if (!response.ok) throw new Error(data.error || "Unable to load users.");
+      setEnabled(data.enabled !== false);
+      setUsers(previous => nextOffset ? [...previous, ...(data.users || [])] : (data.users || []));
+      setHasMore(data.hasMore === true);
+      setOffset(Number(data.nextOffset || 0));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to load users."); }
+    finally { setLoading(false); }
+  };
+  useEffect(() => { void load(); }, []);
+  return <div className="tenant-users-page">
+    <div className="page-heading"><div><div className="eyebrow">ADMINISTRATOR</div><h1>Connected users</h1><p>Account status and connection health, without access to private messages.</p></div>
+      <button className="secondary-button" onClick={() => void load()} disabled={loading}>{loading ? "Loading…" : "Refresh"}</button></div>
+    {!enabled ? <div className="notice-card"><ShieldCheck size={18}/><div><b>Multi-user mode is disabled</b><p>Enable multi-user accounts on the backend to list connected accounts.</p></div></div> : null}
+    {error ? <div className="notice-card" role="alert"><ShieldCheck size={18}/><div><b>Unable to load users</b><p>{error}</p></div></div> : null}
+    <div className="panel tenant-users-list">
+      <div className="section-head"><h3>Registered accounts ({users.length}{hasMore ? "+" : ""})</h3><span className="helper-text">Private inboxes remain owner-only</span></div>
+      {users.map(user => <div className="tenant-user-row" key={user.ownerId}>
+        <div className="tenant-user-avatar"><Users size={18}/></div>
+        <div className="tenant-user-details"><b>Telegram ID {user.ownerId}</b><span>Registered {user.registeredAt ? new Date(user.registeredAt).toLocaleDateString() : "—"}</span></div>
+        <div className="tenant-user-status"><span className={user.automationEnabled ? "permission-chip enabled" : "permission-chip"}>{user.automationEnabled ? "Auto-reply on" : "Paused"}</span><span>{user.readyConnections}/{user.connections} connections ready</span><span>{user.consentGiven ? "Consent recorded" : "Consent pending"}</span></div>
+      </div>)}
+      {!loading && !users.length && !error ? <p className="helper-text">No registered accounts found.</p> : null}
+      {hasMore ? <button className="secondary-button" disabled={loading} onClick={() => void load(offset)}>{loading ? "Loading…" : "Load more users"}</button> : null}
+    </div>
+  </div>;
+}
+
 export default function App() {
   const [page, setPage] = useState("Overview");
   const [query, setQuery] = useState("");
@@ -333,7 +373,8 @@ export default function App() {
           </section>
           {selected ? <section className={"chat-panel " + (mobileChatOpen ? "mobile-chat-active" : "")}><div className="chat-header"><button className="mobile-back-button" onClick={() => setMobileChatOpen(false)} aria-label="Back to conversations"><ArrowLeft size={18}/></button><div className={"contact-avatar " + selected.color}>{selected.initials}</div><div className="chat-contact"><b>{selected.name}</b><span>{selected.handle}</span></div><button className={"secondary-button compact " + (selected.allowed ? "pause-ai" : "allow-ai")} onClick={() => toggleContact(selected.id)} disabled={!selected.senderId || selected.allowed === null || inbox.state.permissionPending.includes(selected.senderId) || inbox.state.cleaning}>{selected.allowed ? <><Pause size={14}/> Pause AI</> : <><Play size={14}/> Allow AI</>}</button></div><div className="message-stream">{inbox.state.historyError ? <div role="alert" className="helper-text">{inbox.state.historyError}<button className="text-link" onClick={() => void refreshLiveInbox()}>Retry</button></div> : null}{inbox.state.historyLoading ? <p role="status" className="helper-text">Loading conversation…</p> : null}{historyHasMore ? <button className="secondary-button compact history-load-button" disabled={historyLoading} onClick={() => void loadOlderMessages()}>{historyLoading ? "Loading older messages…" : "Load older messages"}</button> : null}{selected.messages.length ? selected.messages.map(m => <div key={m.id} className={"message-row " + (m.from === "ai" ? "outgoing" : "")}><div className={"bubble " + (m.from === "ai" ? "bubble-ai" : "bubble-them")}>{m.text}<time>{m.time}</time></div></div>) : <div className="message-empty"><MessageCircle size={22}/><b>{inbox.state.historyLoading ? "Loading messages" : inbox.state.historyError ? "History unavailable" : "No stored messages"}</b><span>{inbox.state.historyLoading ? "Please wait…" : "Your Telegram conversation remains available. You can still send a reply."}</span></div>}</div><div className="reply-box"><textarea value={draft} onChange={e => setDraft(e.target.value)} placeholder={"Message " + selected.name + "…"} rows={2} aria-label="Reply message" maxLength={4096} disabled={replySending || inbox.state.cleaning} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void sendReply(); } }}/><button className="send-button" onClick={() => void sendReply()} disabled={!draft.trim() || replySending || inbox.state.cleaning || !dashboardToken}><Send size={16}/> {replySending ? "Sending…" : "Send"}</button></div></section> : <section className={"chat-panel chat-placeholder " + (mobileChatOpen ? "mobile-chat-active" : "")}><MessageCircle size={28}/><b>Select a conversation</b><p>Choose someone from your inbox to read messages and reply.</p></section>}
           </div>
-        </div> : page === "Settings" ? <div>
+        </div> : page === "Users" ? <TenantUsersPanel apiRequest={apiRequest} />
+        : page === "Settings" ? <div>
           <div className="page-heading"><h1>Settings</h1></div>
           <div className="panel settings-panel">
             <div className="security-note"><ShieldCheck size={18} /><div>

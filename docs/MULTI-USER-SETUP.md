@@ -45,7 +45,8 @@ Official references:
 
 - `/start`: onboarding and processing disclosure.
 - Connect the bot in Telegram settings; select permitted chats and reply rights.
-- `/enable`: consent and start replies, only after an eligible connection exists.
+- `/enable`: consent and start replies after a live permission check and service
+  configuration checks. Unavailable old connections do not block a valid one.
 - Inline buttons also provide enable, pause, status and cleanup controls.
 - `/pause`: cancel pending/processing replies. A send already in progress may finish.
 - `/status`: saved account status; current rights are checked again before sends.
@@ -53,8 +54,20 @@ Official references:
   signed data authenticates the account; no shared admin token is used. The
   dashboard works inside Telegram on supported mobile/desktop clients. Opening
   the URL in an ordinary browser alone is not a login method.
-- Dashboard: preferences, pause, private inbox, manual replies, cleanup and recent
-  queue outcomes. Reopen after the one-hour signed-session expiry.
+- Dashboard: agree to AI processing, then turn on **Enable automatic replies**. The
+  switch saves immediately and reflects the server-confirmed state. **Save
+  preferences** changes only tone/language; it cannot accidentally enable or
+  pause automation. **Pause now** also works with incomplete preference fields.
+  Private inbox, manual replies, cleanup and recent queue outcomes remain
+  available. Reopen after the one-hour signed-session expiry.
+- Dashboard and Telegram controls share activation checks. Missing AI credentials,
+  missing worker authentication configuration, absent connections and revoked
+  reply rights produce actionable errors. Setting a worker secret does not prove
+  the worker is running: the operator must complete step 6 and monitor it. Enabling
+  applies to new messages and does not replay cancelled jobs or import history.
+- Pausing does not require AI configuration or current Telegram permissions. If
+  the account pauses but queue cancellation fails, the UI reports that partial
+  result. Re-enabling cancels leftovers before saving the enabled state.
 - `/clearhistory` then `/clearhistory confirm`: erase only that user's stored
   message copies and cancel pending replies. Minimal destination IDs remain.
 
@@ -112,7 +125,10 @@ uncertain sends, per-account budgets, manual replies and retention.
 No production migration, real customer onboarding, paid hosting provisioning,
 live Telegram delivery, or production load test is performed by this change.
 
-Local validation: 106 tests passed across 10 files, including 22 multi-user
-regressions. TypeScript, ESLint and production build passed. A browser check was
-attempted but could not launch because the environment has no Chromium binary;
-the dashboard has not been visually tested in a real Telegram client.
+Activation regressions cover immediate switch persistence, consent, retry after
+failure, independent preference saves, missing configuration, stale connections,
+revocation, failed database writes, partial pause failures and delivery through a
+simulated webhook/worker flow. React interaction tests run in jsdom. These checks
+are not real Telegram client or visual browser testing; no Chromium binary was
+available in the implementation environment. See GitHub Actions for validation
+of each pushed commit.

@@ -5,9 +5,9 @@ import type { Server } from "node:http";
 import { PGlite } from "@electric-sql/pglite";
 import { telegramAccount } from "./tenant-auth.js";
 import { tenantDb, type TenantJob } from "./tenant-store.js";
-import { processTenantJob, tenantWebhook } from "./tenant-agent.js";
-vi.mock("./ai.js", () => ({ generateReply: vi.fn(async () => "Test reply"), isAiConfigured: () => true, getAiProviderLabel: () => "test" }));
-import { generateReply } from "./ai.js";
+import { processTenantJob, tenantControls, tenantWebhook } from "./tenant-agent.js";
+vi.mock("./ai.js", () => ({ generateReply: vi.fn(async () => "Test reply"), isAiConfigured: vi.fn(() => true), getAiProviderLabel: () => "test" }));
+import { generateReply, isAiConfigured } from "./ai.js";
 const token="test-bot-token";
 function signed(id:number,date=Math.floor(Date.now()/1000)) {
   const p=new URLSearchParams({auth_date:String(date),user:JSON.stringify({id,first_name:"Test"})});
@@ -18,6 +18,8 @@ function signed(id:number,date=Math.floor(Date.now()/1000)) {
 const nativeFetch=globalThis.fetch;
 let db:PGlite, server:Server, base:string;
 let sent:Record<string,unknown>[]=[], revoked=false, brokenStorage=false, uncertainSend=false;
+let brokenAccountWrites=false, brokenJobWrites=false, brokenConnectionWrites=false;
+const unavailableConnections=new Set<string>();
 const json=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers:{"content-type":"application/json"}});
 const ident=(s:string)=>{if(!/^[a-z_][a-z0-9_]*$/.test(s))throw new Error("Bad test identifier");return '"'+s+'"';};
 async function sqlRest(url:URL,init:RequestInit) {
@@ -76,11 +78,14 @@ beforeAll(async()=>{
   vi.stubGlobal("fetch",vi.fn(async(input:string|URL|Request,init:RequestInit={})=>{
     const url=new URL(String(input));
     if(url.hostname==="tenant-storage.test") {
-      if(brokenStorage)return json({},503);
+      if(brokenStorage || (brokenAccountWrites && init.method==="PATCH" && url.pathname.endsWith("tenant_accounts"))
+        || (brokenJobWrites && init.method==="PATCH" && url.pathname.endsWith("tenant_jobs"))
+        || (brokenConnectionWrites && url.pathname.endsWith("tenant_connect")))return json({},503);
       return json(await sqlRest(url,init));
     }
     if(url.hostname!=="api.telegram.org")throw new Error("Unexpected external request");
     const payload=JSON.parse(String(init.body));
+    if(url.pathname.endsWith("getBusinessConnection")&&unavailableConnections.has(payload.business_connection_id))return json({ok:false},400);
     if(url.pathname.endsWith("getBusinessConnection"))return json({ok:true,result:{id:payload.business_connection_id,user:{id:Number(payload.business_connection_id.slice(1))},is_enabled:!revoked,rights:{can_reply:!revoked}}});
     if(url.pathname.endsWith("answerCallbackQuery")) return json({ok:true,result:true});
     if(url.pathname.endsWith("sendMessage")){
@@ -92,7 +97,9 @@ beforeAll(async()=>{
 },30000);
 beforeEach(async()=>{
   await db.exec("truncate tenant_accounts,tenant_connections,tenant_conversations,tenant_messages,tenant_jobs,tenant_daily_usage,tenant_control_updates cascade");
-  sent=[];revoked=brokenStorage=uncertainSend=false;vi.mocked(generateReply).mockReset().mockResolvedValue("Test reply");
+  sent=[];revoked=brokenStorage=uncertainSend=brokenAccountWrites=brokenJobWrites=brokenConnectionWrites=false;
+  unavailableConnections.clear();vi.mocked(isAiConfigured).mockReturnValue(true);vi.stubEnv("CRON_SECRET","x".repeat(40));
+  vi.mocked(generateReply).mockReset().mockResolvedValue("Test reply");
 });
 afterAll(async()=>{if(server)await new Promise<void>(resolve=>server.close(()=>resolve()));if(db)await db.close();vi.unstubAllGlobals();vi.unstubAllEnvs();});
 
@@ -227,5 +234,95 @@ describe("multi-user account boundary",()=>{
   });
   it("denies direct SQL access to anonymous and authenticated browser roles",async()=>{
     for(const role of ["anon","authenticated"]){await db.exec(`set role ${role}`);try{await expect(db.query("select * from tenant_messages")).rejects.toThrow(/permission denied/);await expect(db.query("select tenant_clear_history('1')")).rejects.toThrow(/permission denied/);}finally{await db.exec("reset role");}}
+  });
+});
+
+
+describe("automatic reply activation",()=>{
+  it("requires consent and an actual boolean, scoped to the signed-in user",async()=>{
+    await connect(1,false);await connect(2,false);
+    expect((await request("/automation",1,"PUT",{enabled:"true",consent:true})).status).toBe(400);
+    expect((await request("/automation",1,"PUT",{enabled:true,consent:"true"})).status).toBe(400);
+    const response=await request("/automation",1,"PUT",{enabled:true,consent:true,owner_id:"2"});
+    expect(response.status).toBe(200);expect((await response.json()).account).toMatchObject({owner_id:"1",enabled:true});
+    const rows=(await db.query<{owner_id:string;enabled:boolean}>("select owner_id,enabled from tenant_accounts order by owner_id")).rows;
+    expect(rows).toEqual([{owner_id:"1",enabled:true},{owner_id:"2",enabled:false}]);
+    expect((await request("/me")).status).toBe(200);
+    expect((await(await request("/me")).json()).account.enabled).toBe(true);
+  });
+  it("reports missing connections and revoked permissions without granting consent",async()=>{
+    await tenantDb("rpc/tenant_register","POST",{p_owner:"1"});
+    let response=await request("/automation",1,"PUT",{enabled:true,consent:true});
+    expect(response.status).toBe(409);expect((await response.json()).code).toBe("connection_required");
+    await connect(1,false);revoked=true;
+    response=await request("/automation",1,"PUT",{enabled:true,consent:true});
+    expect(response.status).toBe(403);expect((await response.json()).code).toBe("reply_permission_required");
+    expect((await(await request("/me")).json()).account).toMatchObject({enabled:false,consent_at:null});
+  });
+  it("checks AI and worker setup on both the new and legacy settings endpoints",async()=>{
+    await connect(1,false);vi.mocked(isAiConfigured).mockReturnValue(false);
+    let response=await request("/automation",1,"PUT",{enabled:true,consent:true});
+    expect(response.status).toBe(503);expect((await response.json()).code).toBe("ai_not_configured");
+    vi.mocked(isAiConfigured).mockReturnValue(true);vi.stubEnv("CRON_SECRET","short");
+    response=await request("/settings",1,"PUT",{enabled:true,consent:true,tone:"friendly",language:"Amharic"});
+    expect(response.status).toBe(503);expect((await response.json()).code).toBe("worker_not_configured");
+    expect((await(await request("/me")).json()).account.enabled).toBe(false);
+  });
+  it("skips an unavailable old connection but still verifies the valid one",async()=>{
+    await tenantDb("rpc/tenant_connect","POST",{p_owner:"1",p_connection:"expired",p_enabled:false,p_reply:false});
+    unavailableConnections.add("expired");await connect(1,false);
+    expect((await request("/automation",1,"PUT",{enabled:true,consent:true})).status).toBe(200);
+    await request("/automation",1,"PUT",{enabled:false});unavailableConnections.add("c1");
+    const response=await request("/automation",1,"PUT",{enabled:true,consent:true});
+    expect(response.status).toBe(503);expect((await response.json()).code).toBe("connection_check_failed");
+    expect((await(await request("/me")).json()).account.enabled).toBe(false);
+  });
+  it("never reports success on connection-storage or account-write failures",async()=>{
+    await connect(1,false);brokenConnectionWrites=true;
+    expect((await request("/automation",1,"PUT",{enabled:true,consent:true})).status).toBe(503);
+    brokenConnectionWrites=false;brokenAccountWrites=true;
+    expect((await request("/automation",1,"PUT",{enabled:true,consent:true})).status).toBe(503);
+    expect((await(await request("/me")).json()).account).toMatchObject({enabled:false,consent_at:null});
+    expect(sent).toEqual([]);
+  });
+  it("pauses without AI, worker setup or live permissions and cancels only this user's jobs",async()=>{
+    await connect(1);await connect(2);await ingest(1,"91");await ingest(2,"92");
+    revoked=true;vi.mocked(isAiConfigured).mockReturnValue(false);vi.stubEnv("CRON_SECRET","");
+    const response=await request("/automation",1,"PUT",{enabled:false});
+    expect(response.status).toBe(200);expect((await response.json()).account.enabled).toBe(false);
+    const jobs=(await db.query<{status:string}>("select status from tenant_jobs order by update_id")).rows;
+    expect(jobs.map(j=>j.status)).toEqual(["cancelled","pending"]);
+  });
+  it("reports partial pause failures and cancels old jobs before enabling again",async()=>{
+    await connect(1);await ingest(1,"93");brokenJobWrites=true;
+    const response=await request("/automation",1,"PUT",{enabled:false});
+    const result=await response.json();expect(result.account.enabled).toBe(false);expect(result.warning).toContain("cancellation could not be confirmed");
+    expect((await request("/automation",1,"PUT",{enabled:true})).status).toBe(503);
+    expect((await(await request("/me")).json()).account.enabled).toBe(false);
+    brokenJobWrites=false;expect((await request("/automation",1,"PUT",{enabled:true})).status).toBe(200);
+    expect((await db.query<{status:string}>("select status from tenant_jobs where update_id='93'")).rows[0].status).toBe("cancelled");
+  });
+  it("saves reply preferences without changing automation or requiring readiness",async()=>{
+    await connect(1);vi.mocked(isAiConfigured).mockReturnValue(false);
+    const response=await request("/settings",1,"PUT",{tone:"polite",language:"Amharic"});
+    expect(response.status).toBe(200);expect((await response.json()).account).toMatchObject({enabled:true,tone:"polite",language:"Amharic"});
+  });
+  it("uses the same activation checks in Telegram commands and private buttons",async()=>{
+    await connect(1,false);vi.mocked(isAiConfigured).mockReturnValue(false);
+    await tenantControls("1","/enable");expect(String(sent[0].text)).toContain("AI provider is not configured");
+    expect((await(await request("/me")).json()).account.enabled).toBe(false);
+    vi.mocked(isAiConfigured).mockReturnValue(true);
+    await tenantWebhook({update_id:201,callback_query:{id:"enable",from:{id:1},message:{chat:{type:"private",id:1}},data:"tenant:enable"}});
+    expect(String(sent[1].text)).toContain("Automatic replies enabled");
+    expect((await(await request("/me")).json()).account.enabled).toBe(true);
+  });
+  it("processes a new selected message after activation through the worker",async()=>{
+    await connect(1,false);await connect(2,false);
+    expect((await request("/automation",1,"PUT",{enabled:true,consent:true})).status).toBe(200);
+    for(const id of [1,2])await tenantWebhook({update_id:300+id,business_message:{business_connection_id:"c"+id,chat:{type:"private",id:42},from:{id:42},message_id:301,text:"A new private message"}});
+    await db.exec("update tenant_jobs set available_at=now()-interval '1 second'");
+    const response=await nativeFetch(base+"/api/tenant-worker",{headers:{authorization:"Bearer "+"x".repeat(40)}});
+    expect(response.status).toBe(200);expect((await response.json()).processed).toBe(1);
+    expect(sent).toHaveLength(1);expect(sent[0]).toMatchObject({business_connection_id:"c1",chat_id:"42",text:"Test reply"});
   });
 });

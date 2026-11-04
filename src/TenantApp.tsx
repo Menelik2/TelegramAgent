@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import "./tenant.css";
 
 type Conversation = { connection_id: string; chat_id: string; last_at: string };
@@ -8,8 +8,9 @@ type TelegramWindow = Window & { Telegram?: { WebApp?: { initData: string; ready
 export default function TenantApp() {
   const [auth,setAuth]=useState(""), [notice,setNotice]=useState("Opening your secure Telegram session…"), [busy,setBusy]=useState(false);
   const [profile,setProfile]=useState<Profile|null>(null), [conversations,setConversations]=useState<Conversation[]>([]), [selected,setSelected]=useState<Conversation|null>(null), [messages,setMessages]=useState<Message[]>([]);
-  const [tone,setTone]=useState("friendly, respectful, concise"), [language,setLanguage]=useState("match the sender"), [enabled,setEnabled]=useState(false), [consent,setConsent]=useState(false), [draft,setDraft]=useState("");
+  const [tone,setTone]=useState("friendly, respectful, concise"), [language,setLanguage]=useState("match the sender"), [consent,setConsent]=useState(false), [draft,setDraft]=useState("");
   const [page,setPage]=useState(0);
+  const actionPending=useRef(false), profileRequest=useRef(0);
   useEffect(()=>{
     const ready=()=>{
       const app=(window as TelegramWindow).Telegram?.WebApp;
@@ -26,7 +27,10 @@ export default function TenantApp() {
     const d=await r.json();if(!r.ok)throw new Error(d.error||"Request failed.");return d;
   },[auth]);
   const refresh=useCallback(async()=>{
-    const p:Profile=await api("/me");setProfile(p);setTone(p.account.tone);setLanguage(p.account.language);setEnabled(p.account.enabled);
+    const request=++profileRequest.current;
+    const p:Profile=await api("/me");
+    if(request!==profileRequest.current)return;
+    setProfile(p);setTone(p.account.tone);setLanguage(p.account.language);
     const inbox=await api(`/inbox?offset=${page*100}`);setConversations(inbox.conversations);
   },[api,page]);
   useEffect(()=>{if(auth)void refresh().catch(e=>setNotice(e.message));},[auth,refresh]);
@@ -37,15 +41,39 @@ export default function TenantApp() {
     api(`/messages?connection=${encodeURIComponent(selected.connection_id)}&chat=${encodeURIComponent(selected.chat_id)}`).then(d=>{if(!cancelled)setMessages(d.messages);}).catch(e=>{if(!cancelled)setNotice(e.message);});
     return()=>{cancelled=true;};
   },[selected,auth,api]);
-  const act=async(fn:()=>Promise<void>)=>{setBusy(true);setNotice("");try{await fn();}catch(e){setNotice(e instanceof Error?e.message:"Operation failed.");}finally{setBusy(false);}};
+  const act=async(fn:()=>Promise<void>)=>{
+    if(actionPending.current)return;
+    actionPending.current=true;setBusy(true);setNotice("");
+    try{await fn();}catch(e){setNotice(e instanceof Error?e.message:"Operation failed.");}
+    finally{actionPending.current=false;setBusy(false);}
+  };
+  const setAutomation=(enabled:boolean)=>void act(async()=>{
+    ++profileRequest.current;
+    const result=await api("/automation","PUT",{enabled,consent});
+    ++profileRequest.current;
+    setProfile(current=>current?{...current,account:result.account}:current);
+    setNotice(result.warning||(result.account.enabled
+      ?"Automatic replies enabled for new messages in your selected Telegram chats."
+      :"Automatic replies paused. Queued replies cancelled; a send already in progress may finish."));
+  });
   return <div className="tenant-app"><header className="tenant-header"><div><span className="tenant-kicker">YOUR TELEGRAM ASSISTANT</span><h1>My agent</h1><p>Your account. Your conversations. Your controls.</p></div><span className={"tenant-badge "+(profile?.account.enabled?"active":"")}>{profile?.account.enabled?"Auto-reply on":"Paused"}</span></header>
     {notice&&<div className="tenant-notice" role="status">{notice}</div>}
     {!profile?<section className="tenant-card"><h2>Private sign-in</h2><p>Use the dashboard button in your bot chat. Telegram signs you in without a shared password or administrator token.</p></section>:<>
       <div className="tenant-stats"><section className="tenant-card"><small>Signed-in account</small><b>{profile.account.owner_id}</b></section><section className="tenant-card"><small>Connected accounts</small><b>{profile.connections.filter(c=>c.enabled&&c.can_reply).length}</b></section><section className="tenant-card"><small>Reply attempts · {profile.usage[0]?.day||"today"}</small><b>{profile.usage[0]?.used||0}</b></section></div>
-      <div className="tenant-grid"><section className="tenant-card"><h2>Reply preferences</h2><label className="tenant-toggle"><input type="checkbox" checked={enabled} onChange={e=>setEnabled(e.target.checked)}/> Enable automatic replies</label><p>Connect the bot in Telegram’s Business/Secretary settings and select your chats. Replies require current Telegram permissions.</p><label>Reply tone<input value={tone} maxLength={160} onChange={e=>setTone(e.target.value)}/></label><label>Language preference<input value={language} maxLength={80} onChange={e=>setLanguage(e.target.value)}/></label>
-      {!profile.account.consent_at&&<label className="tenant-toggle"><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/> I agree to send selected incoming message text to the configured AI provider and store copies for up to 7 days while the worker runs, or until I clear them sooner.</label>}
-      <button disabled={busy} onClick={()=>void act(async()=>{await api("/settings","PUT",{enabled,tone,language,consent});await refresh();setNotice("Preferences saved. Pausing cancels queued replies; a send already in progress may finish.");})}>Save preferences</button>
-      <button className="tenant-secondary" disabled={busy} onClick={()=>void act(async()=>{await api("/settings","PUT",{enabled:false,tone,language});await refresh();setNotice("Paused. Queued replies cancelled.");})}>Pause now</button>
+      <div className="tenant-grid"><section className="tenant-card"><h2>Automatic replies</h2>
+      <p>Connect the bot in Telegram’s Business/Secretary settings, select your chats and allow replies.</p>
+      {!profile.account.consent_at&&<label className="tenant-toggle"><input type="checkbox" checked={consent} disabled={busy} onChange={e=>setConsent(e.target.checked)}/> I agree to send selected incoming message text to the configured AI provider and store copies for up to 7 days while the worker runs, or until I clear them sooner.</label>}
+      <label className="tenant-toggle"><input type="checkbox" checked={profile.account.enabled} disabled={busy||(!profile.account.enabled&&!profile.account.consent_at&&!consent)} onChange={e=>setAutomation(e.target.checked)}/> Enable automatic replies</label>
+      <p>{!profile.account.consent_at&&!consent?"Agree to AI processing above to enable replies. ":""}This switch saves immediately. It applies to new incoming messages. Delivery requires the service worker, available AI and current Telegram permissions.</p>
+      <button className="tenant-secondary" disabled={busy} onClick={()=>setAutomation(false)}>Pause now</button>
+      <hr/><h3>Reply preferences</h3><label>Reply tone<input value={tone} maxLength={160} onChange={e=>setTone(e.target.value)}/></label><label>Language preference<input value={language} maxLength={80} onChange={e=>setLanguage(e.target.value)}/></label>
+      <button disabled={busy} onClick={()=>void act(async()=>{
+        ++profileRequest.current;
+        const result=await api("/settings","PUT",{tone,language});
+        ++profileRequest.current;
+        setProfile(current=>current?{...current,account:result.account}:current);
+        setNotice("Reply preferences saved.");
+      })}>Save preferences</button>
       <hr/><h3>Storage</h3><p>Clear your stored message copies while keeping conversation IDs. Original Telegram messages stay unchanged.</p><button className="tenant-secondary" disabled={busy} onClick={()=>{
         if(!window.confirm("Delete your stored message copies and cancel queued replies? This cannot be undone. Telegram messages are unaffected. An in-progress send may complete."))return;
         void act(async()=>{const d=await api("/history","DELETE",undefined,{"x-confirm-inbox-cleanup":"DELETE_STORED_COPIES_ONLY"});setMessages([]);await refresh();setNotice(`Cleared ${d.deletedCount} copies.`);});

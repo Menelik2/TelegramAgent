@@ -1,22 +1,28 @@
-import { generateReply } from "./ai.js";
+import { generateReply, isAiConfigured } from "./ai.js";
 import { decideReply, safeText } from "./policy.js";
-import { tenantAccount, tenantBudget, tenantDb, tenantFinish, tenantThread, eq, type TenantConnection, type TenantJob, type TenantMessage } from "./tenant-store.js";
+import { tenantAccount, tenantBudget, tenantDb, tenantFinish, tenantThread, eq, type TenantAccount, type TenantConnection, type TenantJob, type TenantMessage } from "./tenant-store.js";
 
 export const multiUserEnabled = () => process.env.MULTI_USER_ENABLED === "true";
 type BusinessConnection = { id: string; user: { id: number }; is_enabled: boolean; rights?: { can_reply?: boolean } };
+class TelegramOperationError extends Error {}
+export class TenantActivationError extends Error {
+  constructor(readonly status: number, readonly code: string, message: string) { super(message); }
+}
 export async function telegramCall<T>(method: string, payload: unknown): Promise<T> {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  if (!token) throw new Error("Telegram is not configured.");
-  const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-    method: "POST", signal: AbortSignal.timeout(15000), headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
-  });
-  const body = await response.json() as { ok?: boolean; result: T };
-  if (!response.ok || !body.ok) throw new Error("Telegram rejected the operation or is unavailable.");
-  return body.result;
+  if (!token) throw new TelegramOperationError("Telegram is not configured.");
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+      method: "POST", signal: AbortSignal.timeout(15000), headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+    });
+    const body = await response.json() as { ok?: boolean; result: T };
+    if (!response.ok || !body.ok) throw new Error("Rejected");
+    return body.result;
+  } catch { throw new TelegramOperationError("Telegram rejected the operation or is unavailable."); }
 }
 async function syncConnection(id: string): Promise<BusinessConnection> {
   const connection = await telegramCall<BusinessConnection>("getBusinessConnection", { business_connection_id: id });
-  if (connection.id !== id || !Number.isSafeInteger(connection.user?.id) || connection.user.id < 1) throw new Error("Invalid Business connection.");
+  if (connection?.id !== id || !Number.isSafeInteger(connection.user?.id) || connection.user.id < 1) throw new TelegramOperationError("Invalid Business connection.");
   await tenantDb("rpc/tenant_connect", "POST", { p_owner: String(connection.user.id), p_connection: id, p_enabled: connection.is_enabled === true, p_reply: connection.rights?.can_reply === true });
   return connection;
 }
@@ -26,6 +32,49 @@ export async function verifyTenantConnection(owner: string, id: string): Promise
   const live = await syncConnection(id);
   return String(live.user.id) === owner && live.is_enabled === true && live.rights?.can_reply === true;
 }
+
+/** Both the Mini App and Telegram controls use the same consent and activation rules. */
+export async function saveTenantSettings(owner: string, input: { enabled?: boolean; consent?: boolean; tone?: string; language?: string }) {
+  const current = await tenantAccount(owner);
+  const patch: Partial<TenantAccount> = {};
+  if (input.tone !== undefined) patch.tone = input.tone;
+  if (input.language !== undefined) patch.language = input.language;
+  if (input.enabled === true) {
+    if (!current.consent_at && input.consent !== true) throw new TenantActivationError(400, "consent_required", "Agree to AI processing before enabling automatic replies.");
+    const connections = await tenantDb<TenantConnection[]>("tenant_connections?owner_id=" + eq(owner));
+    if (!connections.length) throw new TenantActivationError(409, "connection_required", "Connect this bot in Telegram’s Business/Secretary settings, select your chats and allow replies. Then try enabling again.");
+    if (!isAiConfigured()) throw new TenantActivationError(503, "ai_not_configured", "The service’s AI provider is not configured. Ask the operator to finish setup, then try again.");
+    if ((process.env.CRON_SECRET || "").length < 32) throw new TenantActivationError(503, "worker_not_configured", "The automatic reply worker is not configured. Ask the operator to finish setup, then try again.");
+    let authorized = false, unavailable = false;
+    for (const connection of connections) {
+      try {
+        if (await verifyTenantConnection(owner, connection.id)) { authorized = true; break; }
+      } catch (error) {
+        // A removed/expired connection must not hide another valid connection.
+        // Storage errors still fail closed, rather than being treated as revoked rights.
+        if (!(error instanceof TelegramOperationError)) throw error;
+        unavailable = true;
+      }
+    }
+    if (!authorized) {
+      if (unavailable) throw new TenantActivationError(503, "connection_check_failed", "Telegram could not verify an eligible connection. Check your bot connection and reply permission, then try again.");
+      throw new TenantActivationError(403, "reply_permission_required", "Telegram reply permission is disabled or revoked. Reconnect this bot or allow replies in Telegram, then try again.");
+    }
+    // Do not revive replies left behind by an interrupted pause.
+    if (!current.enabled) await tenantDb(`tenant_jobs?owner_id=${eq(owner)}&status=in.(pending,processing)`, "PATCH", { status: "cancelled" });
+    if (!current.consent_at) patch.consent_at = new Date().toISOString();
+  }
+  if (input.enabled !== undefined) patch.enabled = input.enabled;
+  const accounts = await tenantDb<TenantAccount[]>("tenant_accounts?owner_id=" + eq(owner), "PATCH", patch);
+  if (!accounts[0]) throw new Error("Account settings could not be saved.");
+  let warning: string | undefined;
+  if (input.enabled === false) {
+    try { await tenantDb(`tenant_jobs?owner_id=${eq(owner)}&status=in.(pending,processing)`, "PATCH", { status: "cancelled" }); }
+    catch { warning = "Automatic replies are paused, but queued-job cancellation could not be confirmed. Retry Pause before enabling again. A send already in progress may finish."; }
+  }
+  return { account: accounts[0], warning };
+}
+
 export async function tenantControls(owner: string, text: string): Promise<void> {
   // Idempotent creation; the SQL connect function separately binds verified Business connections.
   const existing = await tenantDb<Array<{ owner_id: string }>>("tenant_accounts?owner_id=" + eq(owner));
@@ -36,18 +85,15 @@ export async function tenantControls(owner: string, text: string): Promise<void>
   const command = text.trim().split(/\s+/)[0].split("@")[0].toLowerCase();
   let response = "Your private AI agent\n\n1. Connect this bot to your account using Telegram’s connected Business/Secretary bot settings. Choose the chats it may access and allow replies.\n2. Send /enable to consent to AI processing and enable replies. Selected incoming message text is sent to the configured AI provider and stored for up to 7 days while the worker runs, or until you clear it sooner.\n\n/pause — stop automatic replies\n/status — connection status\n/dashboard — private web dashboard\n/clearhistory — clear your stored copies\n\nStarting this bot alone does not give it access to your inbox.";
   if (command === "/enable") {
-    const connections = await tenantDb<TenantConnection[]>("tenant_connections?owner_id=" + eq(owner));
-    let authorized = false;
-    for (const connection of connections) if (await verifyTenantConnection(owner, connection.id)) authorized = true;
-    if (!authorized) response = "Connect this bot to your account and grant reply permission first. Then send /enable.";
-    else {
-      await tenantDb("tenant_accounts?owner_id=" + eq(owner), "PATCH", { enabled: true, consent_at: new Date().toISOString() });
-      response = "AI processing enabled for the chats you selected in Telegram. /pause stops automatic replies. /dashboard opens your private settings and inbox.";
-    }
+    try {
+      await saveTenantSettings(owner, { enabled: true, consent: true });
+      response = "Automatic replies enabled for new messages in the chats you selected in Telegram. /pause stops automatic replies. /dashboard shows your settings and reply jobs. Delivery still requires the service worker and available AI/Telegram services.";
+    } catch (error) { response = error instanceof TenantActivationError ? error.message : "Could not confirm automatic reply settings were saved. Use /status to check, then retry /enable. If this continues, contact the operator."; }
   } else if (command === "/pause") {
-    await tenantDb("tenant_accounts?owner_id=" + eq(owner), "PATCH", { enabled: false });
-    await tenantDb(`tenant_jobs?owner_id=${eq(owner)}&status=in.(pending,processing)`, "PATCH", { status: "cancelled" });
-    response = "Automatic replies paused. A Telegram send already in progress may still finish.";
+    try {
+      const result = await saveTenantSettings(owner, { enabled: false });
+      response = result.warning || "Automatic replies paused. A Telegram send already in progress may still finish.";
+    } catch { response = "Could not confirm automatic replies were paused. Retry /pause or disconnect the bot in Telegram to revoke its access."; }
   } else if (command === "/status") {
     const account = await tenantAccount(owner);
     const connections = await tenantDb<TenantConnection[]>("tenant_connections?owner_id=" + eq(owner));
@@ -74,9 +120,9 @@ export async function tenantControls(owner: string, text: string): Promise<void>
 export async function tenantWebhook(update: Record<string, any>): Promise<void> {
   const callback = update.callback_query;
   if (callback && callback.message?.chat?.type === "private" && String(callback.message.chat.id) === String(callback.from?.id) && /^tenant:(enable|pause|status|clearhistory)$/.test(String(callback.data))) {
+    await telegramCall("answerCallbackQuery", { callback_query_id: callback.id }).catch(() => undefined);
     const claimed = await tenantDb<boolean>("rpc/tenant_control_claim", "POST", { p_update: String(update.update_id), p_owner: String(callback.from.id) });
     if (claimed) await tenantControls(String(callback.from.id), "/" + String(callback.data).slice(7));
-    await telegramCall("answerCallbackQuery", { callback_query_id: callback.id }).catch(() => undefined);
     return;
   }
   if (update.business_connection?.id) { await syncConnection(String(update.business_connection.id)); return; }

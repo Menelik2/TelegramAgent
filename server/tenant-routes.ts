@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { timingSafeEqual } from "node:crypto";
 import { telegramAccount } from "./tenant-auth.js";
-import { multiUserEnabled, processTenantJob, telegramCall, verifyTenantConnection } from "./tenant-agent.js";
+import { multiUserEnabled, processTenantJob, saveTenantSettings, TenantActivationError, telegramCall, verifyTenantConnection } from "./tenant-agent.js";
 import { tenantAccount, tenantBudget, tenantDb, tenantThread, eq, type TenantJob } from "./tenant-store.js";
 import { safeText } from "./policy.js";
 
@@ -16,7 +16,9 @@ tenantRouter.use((req, res, next) => {
 });
 const owner = (res: Response): string => res.locals.tenantOwner;
 const route = (handler: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response) => {
-  void handler(req, res).catch(() => res.status(503).json({ error: "Operation unavailable. Check connection permissions and try again. If sending failed, check Telegram before retrying." }));
+  void handler(req, res).catch(error => error instanceof TenantActivationError
+    ? res.status(error.status).json({ error: error.message, code: error.code })
+    : res.status(503).json({ error: "Operation could not be confirmed. Refresh to check saved settings. If sending failed, check Telegram before retrying. Contact the operator if this continues." }));
 };
 tenantRouter.get("/me", route(async (_req, res) => {
   const id = owner(res);
@@ -29,15 +31,15 @@ tenantRouter.get("/me", route(async (_req, res) => {
   const jobs = [...new Map([...blocked, ...recent].map(job => [job.update_id, job])).values()];
   return res.json({ account, connections, usage, jobs });
 }));
+tenantRouter.put("/automation", route(async (req, res) => {
+  const { enabled, consent } = req.body || {};
+  if (typeof enabled !== "boolean") return res.status(400).json({ error: "Choose whether automatic replies should be enabled." });
+  return res.json({ ok: true, ...await saveTenantSettings(owner(res), { enabled, consent: consent === true }) });
+}));
 tenantRouter.put("/settings", route(async (req, res) => {
-  const id = owner(res);
-  const current = await tenantAccount(id);
   const { enabled, tone, language, consent } = req.body || {};
-  if (typeof enabled !== "boolean" || typeof tone !== "string" || !tone.trim() || tone.length > 160 || typeof language !== "string" || !language.trim() || language.length > 80) return res.status(400).json({ error: "Invalid settings." });
-  if (enabled && !current.consent_at && consent !== true) return res.status(400).json({ error: "Consent to AI processing is required." });
-  await tenantDb(`tenant_accounts?owner_id=${eq(id)}`, "PATCH", { enabled, tone: safeText(tone,160), language: safeText(language,80), ...(enabled && !current.consent_at ? { consent_at: new Date().toISOString() } : {}) });
-  if (!enabled) await tenantDb(`tenant_jobs?owner_id=${eq(id)}&status=in.(pending,processing)`, "PATCH", { status: "cancelled" });
-  return res.json({ ok: true });
+  if ((enabled !== undefined && typeof enabled !== "boolean") || typeof tone !== "string" || !tone.trim() || tone.length > 160 || typeof language !== "string" || !language.trim() || language.length > 80) return res.status(400).json({ error: "Invalid settings." });
+  return res.json({ ok: true, ...await saveTenantSettings(owner(res), { enabled, tone: safeText(tone,160), language: safeText(language,80), consent: consent === true }) });
 }));
 tenantRouter.get("/inbox", route(async (req, res) => {
   const offset = Number(req.query.offset || 0);

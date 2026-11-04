@@ -11,6 +11,7 @@ export default function TenantApp() {
   const [tone,setTone]=useState("friendly, respectful, concise"), [language,setLanguage]=useState("match the sender"), [consent,setConsent]=useState(false), [draft,setDraft]=useState("");
   const [page,setPage]=useState(0);
   const [statusError,setStatusError]=useState("");
+  const [ownKey,setOwnKey]=useState(""), [keyConfigured,setKeyConfigured]=useState(false), [keyStatus,setKeyStatus]=useState("");
   const actionPending=useRef(false), profileRequest=useRef(0);
   const hasProfile=profile!==null;
   useEffect(()=>{
@@ -34,6 +35,7 @@ export default function TenantApp() {
     if(request!==profileRequest.current)return;
     setProfile(p);setStatusError("");setTone(p.account.tone);setLanguage(p.account.language);
     const inbox=await api(`/inbox?offset=${page*100}`);setConversations(inbox.conversations);
+    try { const key=await api("/ai-key");setKeyConfigured(key.configured===true); } catch { setKeyStatus("Could not check AI key settings."); }
   },[api,page]);
   useEffect(()=>{if(auth)void refresh().catch(e=>setNotice(e.message));},[auth,refresh]);
   useEffect(()=>{
@@ -97,6 +99,12 @@ export default function TenantApp() {
         setProfile(current=>current?{...current,account:result.account}:current);
         setNotice("Reply preferences saved.");
       })}>Save preferences</button>
+      <hr/><h3>Your Gemini API key</h3><p>Use your own Gemini 3.5 Flash-Lite API key for your Telegram auto-replies. Your key is encrypted on the server and is never shown again. Leave this empty to use the operator's shared provider.</p>
+      <p role="status">{keyConfigured ? "Your private Gemini key is configured." : "No personal API key configured."}</p>
+      <label>Gemini API key<input type="password" autoComplete="off" value={ownKey} maxLength={256} onChange={e=>setOwnKey(e.target.value)} placeholder="AIza…" /></label>
+      <button disabled={busy||!ownKey.trim()} onClick={()=>void act(async()=>{await api("/ai-key","PUT",{apiKey:ownKey.trim()});setOwnKey("");setKeyConfigured(true);setKeyStatus("Private API key saved.");})}>Save private API key</button>
+      {keyConfigured?<button className="tenant-secondary" disabled={busy} onClick={()=>{if(!window.confirm("Remove your personal Gemini API key? Future replies will use the shared provider if configured."))return;void act(async()=>{await api("/ai-key","DELETE");setKeyConfigured(false);setOwnKey("");setKeyStatus("Private API key removed.");});}}>Remove API key</button>:null}
+      {keyStatus?<p role="status">{keyStatus}</p>:null}
       <hr/><h3>Storage</h3><p>Clear your stored message copies while keeping conversation IDs. Original Telegram messages stay unchanged.</p><button className="tenant-secondary" disabled={busy} onClick={()=>{
         if(!window.confirm("Delete your stored message copies and cancel queued replies? This cannot be undone. Telegram messages are unaffected. An in-progress send may complete."))return;
         void act(async()=>{const d=await api("/history","DELETE",undefined,{"x-confirm-inbox-cleanup":"DELETE_STORED_COPIES_ONLY"});setMessages([]);await refresh();setNotice(`Cleared ${d.deletedCount} copies.`);});

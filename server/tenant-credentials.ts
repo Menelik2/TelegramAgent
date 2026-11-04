@@ -34,9 +34,10 @@ export async function tenantCredential(owner: string): Promise<{ apiKey: string;
 }
 export async function saveTenantCredential(owner: string, apiKey: string): Promise<void> {
   if (!/^AIza[\w-]{20,200}$/.test(apiKey)) throw new Error("Enter a valid-looking Gemini API key.");
-  await tenantDb("tenant_ai_credentials?on_conflict=owner_id", "POST", {
-    owner_id: owner, model: "gemini-3.5-flash-lite", secret_ciphertext: seal(apiKey, owner), updated_at: new Date().toISOString()
-  });
+  const existing = await tenantCredentialStatus(owner);
+  const values = { model: "gemini-3.5-flash-lite", secret_ciphertext: seal(apiKey, owner), updated_at: new Date().toISOString() };
+  if (existing.configured) await tenantDb(`tenant_ai_credentials?owner_id=${eq(owner)}`, "PATCH", values);
+  else await tenantDb("tenant_ai_credentials", "POST", { owner_id: owner, ...values });
 }
 export async function deleteTenantCredential(owner: string): Promise<void> {
   await tenantDb(`tenant_ai_credentials?owner_id=${eq(owner)}`, "DELETE");

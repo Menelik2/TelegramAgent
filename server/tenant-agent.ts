@@ -1,3 +1,5 @@
+import { checkOperationDeadline, operationSignal, withoutOperationDeadline } from "./operation-deadline.js";
+import { tenantWorkerMode } from "./tenant-worker-config.js";
 import { generateReply, isAiConfigured } from "./ai.js";
 import { decideReply, safeText } from "./policy.js";
 import { tenantDashboardUrl } from "./tenant-dashboard.js";
@@ -10,11 +12,12 @@ export class TenantActivationError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) { super(message); }
 }
 export async function telegramCall<T>(method: string, payload: unknown): Promise<T> {
+  checkOperationDeadline();
   const token = process.env.TELEGRAM_BOT_TOKEN;
   if (!token) throw new TelegramOperationError("Telegram is not configured.");
   try {
     const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
-      method: "POST", signal: AbortSignal.timeout(15000), headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
+      method: "POST", signal: operationSignal(15000), headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload)
     });
     const body = await response.json() as { ok?: boolean; result: T };
     if (!response.ok || !body.ok) throw new Error("Rejected");
@@ -45,7 +48,9 @@ export async function saveTenantSettings(owner: string, input: { enabled?: boole
     const connections = await tenantDb<TenantConnection[]>("tenant_connections?owner_id=" + eq(owner));
     if (!connections.length) throw new TenantActivationError(409, "connection_required", "Connect this bot in Telegram’s Business/Secretary settings, select your chats and allow replies. Then try enabling again.");
     if (!isAiConfigured()) throw new TenantActivationError(503, "ai_not_configured", "The service’s AI provider is not configured. Ask the operator to finish setup, then try again.");
-    if ((process.env.CRON_SECRET || "").length < 32) throw new TenantActivationError(503, "worker_not_configured", "The automatic reply worker is not configured. Ask the operator to finish setup, then try again.");
+    const workerMode = tenantWorkerMode();
+    if (workerMode === "invalid") throw new TenantActivationError(503, "worker_mode_invalid", "The reply processing mode is invalid. Ask the operator to select webhook or external mode.");
+    if (workerMode === "external" && (process.env.CRON_SECRET || "").length < 32) throw new TenantActivationError(503, "worker_not_configured", "External reply processing requires a configured worker and CRON_SECRET. Use webhook mode for automatic processing without a separate worker.");
     let authorized = false, unavailable = false;
     for (const connection of connections) {
       try {
@@ -88,7 +93,7 @@ export async function tenantControls(owner: string, text: string): Promise<void>
   if (command === "/enable") {
     try {
       await saveTenantSettings(owner, { enabled: true, consent: true });
-      response = "Automatic replies enabled for new messages in the chats you selected in Telegram. /pause stops automatic replies. /dashboard shows your settings and reply jobs. Delivery still requires the service worker and available AI/Telegram services.";
+      response = "Automatic replies enabled for new messages in the chats you selected in Telegram. /pause stops automatic replies. /dashboard shows your settings and reply jobs. New selected messages are processed automatically, subject to AI availability and Telegram permissions.";
     } catch (error) { response = error instanceof TenantActivationError ? error.message : "Could not confirm automatic reply settings were saved. Use /status to check, then retry /enable. If this continues, contact the operator."; }
   } else if (command === "/pause") {
     try {
@@ -126,7 +131,7 @@ export async function tenantControls(owner: string, text: string): Promise<void>
 }
 
 /** Called only after the shared webhook secret is verified, BEFORE legacy global storage. */
-export async function tenantWebhook(update: Record<string, any>): Promise<void> {
+export async function tenantWebhook(update: Record<string, any>): Promise<boolean | void> {
   const callback = update.callback_query;
   if (callback && callback.message?.chat?.type === "private" && String(callback.message.chat.id) === String(callback.from?.id) && /^tenant:(enable|pause|status|clearhistory)$/.test(String(callback.data))) {
     await telegramCall("answerCallbackQuery", { callback_query_id: callback.id }).catch(() => undefined);
@@ -156,6 +161,8 @@ export async function tenantWebhook(update: Record<string, any>): Promise<void> 
   const text = safeText(message.text || message.caption, 4096);
   if (!text || !Number.isSafeInteger(message.message_id) || !/^[1-9][0-9]*$/.test(String(message.chat.id))) return;
   await tenantDb("rpc/tenant_ingest", "POST", { p_update: String(update.update_id), p_connection: connection.id, p_chat: String(message.chat.id), p_text: text, p_telegram: message.message_id });
+  const pending = await tenantDb<Array<{ update_id: string }>>(`tenant_jobs?select=update_id&update_id=${eq(String(update.update_id))}&status=eq.pending&limit=1`);
+  return pending.length > 0;
 }
 
 export async function processTenantJob(job: TenantJob): Promise<void> {
@@ -180,6 +187,6 @@ export async function processTenantJob(job: TenantJob): Promise<void> {
     // Copy failure must never cause the delivered Telegram message to be resent.
     try { await tenantDb("tenant_messages", "POST", { owner_id: job.owner_id, connection_id: job.connection_id, chat_id: job.chat_id, direction: "outgoing", body: reply.slice(0,4096), telegram_id: result.message_id }); } catch { /* sent state is authoritative */ }
   } catch {
-    await tenantFinish(job, sending ? "uncertain" : "failed");
+    await withoutOperationDeadline(() => tenantFinish(job, sending ? "uncertain" : "failed"));
   }
 }

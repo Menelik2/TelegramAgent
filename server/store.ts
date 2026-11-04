@@ -1,3 +1,4 @@
+import { operationSignal } from "./operation-deadline.js";
 const supabaseUrl = process.env.SUPABASE_URL?.replace(/\/$/, "");
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const memoryEvents: AgentEvent[] = [];
@@ -284,7 +285,7 @@ const DEFAULT_AI_SETTINGS: AiRuntimeSettings = {
 export async function getAiRuntimeSettings(): Promise<AiRuntimeSettings> {
   if (!isPersistentStoreConfigured()) return DEFAULT_AI_SETTINGS;
   try {
-    const response = await supabaseRequest("agent_ai_settings?select=provider,model,fallback_enabled,updated_at&id=eq.1&limit=1");
+    const response = await supabaseRequest("agent_ai_settings?select=provider,model,fallback_enabled,updated_at&id=eq.1&limit=1", { signal: operationSignal(15000) });
     if (!response.ok) {
       return {
         ...DEFAULT_AI_SETTINGS,

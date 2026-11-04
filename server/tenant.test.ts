@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import type { Server } from "node:http";
@@ -7,6 +7,14 @@ import { telegramAccount } from "./tenant-auth.js";
 import { tenantDb, type TenantJob } from "./tenant-store.js";
 import { processTenantJob, tenantControls, tenantWebhook } from "./tenant-agent.js";
 vi.mock("./ai.js", () => ({ generateReply: vi.fn(async () => "Test reply"), isAiConfigured: vi.fn(() => true), getAiProviderLabel: () => "test" }));
+vi.mock("@vercel/functions", () => ({ waitUntil: vi.fn() }));
+vi.mock("node:timers/promises", () => ({ setTimeout: vi.fn(async () => {
+  if (delayGate) await delayGate;
+  // Simulate the queue's eligibility delay using isolated PostgreSQL, never production.
+  await db.exec("update tenant_jobs set available_at=now()-interval '1 second'");
+}) }));
+import { waitUntil } from "@vercel/functions";
+import { withOperationDeadline } from "./operation-deadline.js";
 import { generateReply, isAiConfigured } from "./ai.js";
 const token="test-bot-token";
 function signed(id:number,date=Math.floor(Date.now()/1000)) {
@@ -17,6 +25,7 @@ function signed(id:number,date=Math.floor(Date.now()/1000)) {
 }
 const nativeFetch=globalThis.fetch;
 let db:PGlite, server:Server, base:string;
+let delayGate:Promise<void>|undefined;
 let sent:Record<string,unknown>[]=[], revoked=false, brokenStorage=false, uncertainSend=false;
 let brokenAccountWrites=false, brokenJobWrites=false, brokenConnectionWrites=false;
 const unavailableConnections=new Set<string>();
@@ -97,10 +106,12 @@ beforeAll(async()=>{
 },30000);
 beforeEach(async()=>{
   await db.exec("truncate tenant_accounts,tenant_connections,tenant_conversations,tenant_messages,tenant_jobs,tenant_daily_usage,tenant_control_updates cascade");
+  delayGate=undefined;vi.mocked(waitUntil).mockClear();vi.stubEnv("TENANT_WORKER_MODE","external");
   sent=[];revoked=brokenStorage=uncertainSend=brokenAccountWrites=brokenJobWrites=brokenConnectionWrites=false;
   unavailableConnections.clear();vi.mocked(isAiConfigured).mockReturnValue(true);vi.stubEnv("CRON_SECRET","x".repeat(40));vi.stubEnv("APP_BASE_URL","https://app.test");vi.stubEnv("VERCEL_URL","");
   vi.mocked(generateReply).mockReset().mockResolvedValue("Test reply");
 });
+afterEach(async()=>{await Promise.all(vi.mocked(waitUntil).mock.calls.map(call=>call[0]));});
 afterAll(async()=>{if(server)await new Promise<void>(resolve=>server.close(()=>resolve()));if(db)await db.close();vi.unstubAllGlobals();vi.unstubAllEnvs();});
 
 describe("multi-user account boundary",()=>{
@@ -357,5 +368,77 @@ describe("private /dashboard flow",()=>{
     await tenantWebhook({update_id:501,callback_query:{id:"enable-from-dashboard",from:{id:1},message:{chat:{type:"private",id:1}},data:"tenant:enable"}});
     await tenantControls("1","/dashboard");
     expect(sent[2].text).toContain("Auto-reply: on");
+  });
+});
+
+
+describe("automatic webhook worker",()=>{
+  const incoming=(id=601,owner=1)=>({update_id:id,business_message:{business_connection_id:"c"+owner,chat:{type:"private",id:42},from:{id:42},message_id:id,text:"A private incoming message"}});
+  const webhook=(body:unknown,secret="webhook-secret")=>nativeFetch(base+"/api/telegram/webhook",{method:"POST",headers:{"content-type":"application/json","x-telegram-bot-api-secret-token":secret},body:JSON.stringify(body)});
+  const finish=()=>Promise.all(vi.mocked(waitUntil).mock.calls.map(call=>call[0]));
+  it("enables by default without CRON_SECRET and replies after webhook acknowledgement",async()=>{
+    vi.stubEnv("TENANT_WORKER_MODE","");vi.stubEnv("CRON_SECRET","");await connect(1,false);
+    const enabled=await request("/automation",1,"PUT",{enabled:true,consent:true});expect(enabled.status).toBe(200);
+    let release!:()=>void;delayGate=new Promise(resolve=>{release=resolve;});
+    const result=await webhook(incoming());expect(result.status).toBe(200);
+    expect(waitUntil).toHaveBeenCalledTimes(1);expect(sent).toEqual([]);
+    release();await finish();
+    expect(sent).toHaveLength(1);expect(sent[0]).toMatchObject({business_connection_id:"c1",chat_id:"42",text:"Test reply"});
+    expect((await db.query<{status:string}>("select status from tenant_jobs where update_id='601'")).rows[0].status).toBe("sent");
+    expect((await nativeFetch(base+"/api/tenant-worker")).status).toBe(401);
+  });
+  it("retains explicit external mode and rejects invalid configuration",async()=>{
+    await connect(1,false);vi.stubEnv("CRON_SECRET","");
+    expect((await request("/automation",1,"PUT",{enabled:true,consent:true})).status).toBe(503);
+    vi.stubEnv("TENANT_WORKER_MODE","invalid");
+    const result=await request("/automation",1,"PUT",{enabled:true,consent:true});
+    expect(result.status).toBe(503);expect((await result.json()).code).toBe("worker_mode_invalid");
+    expect(waitUntil).not.toHaveBeenCalled();
+  });
+  it("does not schedule work for untrusted webhooks, paused accounts, or unconsented users",async()=>{
+    vi.stubEnv("TENANT_WORKER_MODE","webhook");await connect(1,false);
+    expect((await webhook(incoming(),"wrong")).status).toBe(401);
+    expect((await webhook(incoming())).status).toBe(200);
+    await connect(1);await request("/automation",1,"PUT",{enabled:false});
+    expect((await webhook(incoming(602))).status).toBe(200);
+    expect(waitUntil).not.toHaveBeenCalled();expect(sent).toEqual([]);
+  });
+  it("deduplicates concurrent deliveries and processes independent users",async()=>{
+    vi.stubEnv("TENANT_WORKER_MODE","webhook");await connect(1);await connect(2);
+    const responses=await Promise.all([webhook(incoming()),webhook(incoming()),webhook(incoming(602,2))]);
+    expect(responses.every(r=>r.ok)).toBe(true);await finish();
+    expect(sent).toHaveLength(2);expect(sent.map(p=>p.business_connection_id).sort()).toEqual(["c1","c2"]);
+    expect((await db.query("select * from tenant_jobs where status='sent'")).rows).toHaveLength(2);
+  });
+  it("continues through several queued messages in the same conversation",async()=>{
+    vi.stubEnv("TENANT_WORKER_MODE","webhook");await connect(1);
+    await Promise.all([webhook(incoming(601)),webhook(incoming(602)),webhook(incoming(603))]);await finish();
+    expect(sent).toHaveLength(3);expect((await db.query("select * from tenant_jobs where status='sent'")).rows).toHaveLength(3);
+  });
+  it.each(["pause","revoke","cleanup"])("stops background delivery after %s during the delay",async action=>{
+    vi.stubEnv("TENANT_WORKER_MODE","webhook");await connect(1);
+    let release!:()=>void;delayGate=new Promise(resolve=>{release=resolve;});
+    await webhook(incoming());
+    if(action==="pause")await request("/automation",1,"PUT",{enabled:false});
+    else if(action==="revoke")revoked=true;
+    else await request("/history",1,"DELETE",undefined,{"x-confirm-inbox-cleanup":"DELETE_STORED_COPIES_ONLY"});
+    release();await finish();expect(sent).toEqual([]);
+    expect((await db.query("select * from tenant_conversations")).rows).toHaveLength(1);
+  });
+  it("keeps unknown sends blocked when later webhooks wake the queue",async()=>{
+    vi.stubEnv("TENANT_WORKER_MODE","webhook");await connect(1);uncertainSend=true;
+    await webhook(incoming());await finish();expect(sent).toHaveLength(1);
+    uncertainSend=false;await webhook(incoming(602));await finish();expect(sent).toHaveLength(1);
+    expect((await db.query<{status:string}>("select status from tenant_jobs where update_id='602'")).rows[0].status).toBe("pending");
+    await request("/jobs/601/cancel",1,"POST");await finish();expect(sent).toHaveLength(2);
+  });
+  it("fails closed when durable ingestion fails",async()=>{
+    vi.stubEnv("TENANT_WORKER_MODE","webhook");await connect(1);brokenStorage=true;
+    expect((await webhook(incoming())).status).toBe(503);expect(waitUntil).not.toHaveBeenCalled();expect(sent).toEqual([]);
+  });
+  it("records a failed job independently when its processing deadline expires",async()=>{
+    await connect(1);await ingest(1,"701");const job=await claim();
+    await withOperationDeadline(0,async()=>{await new Promise(resolve=>setTimeout(resolve,5));await processTenantJob(job);});
+    expect(sent).toEqual([]);expect((await db.query<{status:string}>("select status from tenant_jobs where update_id='701'")).rows[0].status).toBe("failed");
   });
 });

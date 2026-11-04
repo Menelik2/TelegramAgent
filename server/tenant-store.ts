@@ -1,14 +1,16 @@
+import { checkOperationDeadline, operationSignal } from "./operation-deadline.js";
 export type TenantAccount = { owner_id: string; enabled: boolean; consent_at: string | null; tone: string; language: string };
 export type TenantConnection = { id: string; owner_id: string; enabled: boolean; can_reply: boolean };
 export type TenantMessage = { id: number; owner_id: string; connection_id: string; chat_id: string; body: string; direction: "incoming" | "outgoing"; created_at: string };
 export type TenantJob = { update_id: string; owner_id: string; connection_id: string; chat_id: string; message_id: number | null; status: string };
 export const eq = (value: string) => "eq." + encodeURIComponent(value);
 export async function tenantDb<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+  checkOperationDeadline();
   const url = process.env.SUPABASE_URL?.replace(/\/$/, "");
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("Multi-user storage is not configured.");
   const response = await fetch(url + "/rest/v1/" + path, {
-    method, signal: AbortSignal.timeout(15000),
+    method, signal: operationSignal(15000),
     headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", Prefer: "return=representation" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) })
   });

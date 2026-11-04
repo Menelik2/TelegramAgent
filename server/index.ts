@@ -11,6 +11,7 @@ import { claimUpdate, clearStoredInboxHistory, getLastActivityAt, isPersistentSt
 import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getPreferences, getOwnerUserIds, saveOwnerUserIds, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setAutomationEnabled, setContact } from "./profile-store.js";
 
 import { multiUserEnabled, tenantWebhook } from "./tenant-agent.js";
+import { scheduleTenantQueue } from "./tenant-queue.js";
 import { tenantRouter, tenantWorker } from "./tenant-routes.js";
 
 const app = express();
@@ -441,7 +442,9 @@ app.post("/api/telegram/webhook", (req, res, next) => multiUserEnabled() ? next(
   if (!updateId) return res.status(400).json({ ok: false, error: "Missing update_id." });
   if (multiUserEnabled()) {
     try {
-      await tenantWebhook(update);
+      const deadlineAt = Date.now() + 240_000;
+      const pending = await tenantWebhook(update);
+      if (pending) scheduleTenantQueue(deadlineAt);
       return res.json({ ok: true });
     } catch {
       return res.status(503).json({ ok: false, error: "Account processing unavailable; Telegram may retry." });

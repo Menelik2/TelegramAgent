@@ -87,7 +87,7 @@ export default function TenantApp() {
       <p>Connect the bot in Telegram’s Business/Secretary settings, select your chats and allow replies.</p>
       {!profile.account.consent_at&&<label className="tenant-toggle"><input type="checkbox" checked={consent} disabled={busy} onChange={e=>setConsent(e.target.checked)}/> I agree to send selected incoming message text to the configured AI provider and store copies for up to 7 days while the worker runs, or until I clear them sooner.</label>}
       <label className="tenant-toggle"><input type="checkbox" checked={profile.account.enabled} disabled={busy||(!profile.account.enabled&&!profile.account.consent_at&&!consent)} onChange={e=>setAutomation(e.target.checked)}/> Enable automatic replies</label>
-      <p>{!profile.account.consent_at&&!consent?"Agree to AI processing above to enable replies. ":""}This switch saves immediately. It applies to new incoming messages. Delivery requires the service worker, available AI and current Telegram permissions.</p>
+      <p>{!profile.account.consent_at&&!consent?"Agree to AI processing above to enable replies. ":""}This switch saves immediately. It applies to new incoming messages. Selected messages are processed even after you close this dashboard. AI availability and Telegram permissions still apply.</p>
       <button className="tenant-secondary" disabled={busy} onClick={()=>setAutomation(false)}>Pause now</button>
       <hr/><h3>Reply preferences</h3><label>Reply tone<input value={tone} maxLength={160} onChange={e=>setTone(e.target.value)}/></label><label>Language preference<input value={language} maxLength={80} onChange={e=>setLanguage(e.target.value)}/></label>
       <button disabled={busy} onClick={()=>void act(async()=>{

@@ -1,7 +1,9 @@
+import { runTenantBatch, scheduleTenantQueue } from "./tenant-queue.js";
+import { withOperationDeadline } from "./operation-deadline.js";
 import { Router, type Request, type Response } from "express";
 import { timingSafeEqual } from "node:crypto";
 import { telegramAccount } from "./tenant-auth.js";
-import { multiUserEnabled, processTenantJob, saveTenantSettings, TenantActivationError, telegramCall, verifyTenantConnection } from "./tenant-agent.js";
+import { multiUserEnabled, saveTenantSettings, TenantActivationError, telegramCall, verifyTenantConnection } from "./tenant-agent.js";
 import { tenantAccount, tenantBudget, tenantDb, tenantThread, eq, type TenantJob } from "./tenant-store.js";
 import { safeText } from "./policy.js";
 
@@ -57,7 +59,8 @@ tenantRouter.delete("/history", route(async (req, res) => {
   return res.json({ ok: true, deletedCount: await tenantDb("rpc/tenant_clear_history","POST",{ p_owner: owner(res) }) });
 }));
 tenantRouter.post("/jobs/:id/cancel", route(async (req, res) => {
-  await tenantDb(`tenant_jobs?owner_id=${eq(owner(res))}&update_id=${eq(String(req.params.id))}&status=in.(pending,uncertain,failed)`, "PATCH", { status: "cancelled" });
+  const cancelled = await tenantDb<TenantJob[]>(`tenant_jobs?owner_id=${eq(owner(res))}&update_id=${eq(String(req.params.id))}&status=in.(pending,uncertain,failed)`, "PATCH", { status: "cancelled" });
+  if (cancelled.length) scheduleTenantQueue();
   return res.json({ ok: true });
 }));
 tenantRouter.post("/reply", route(async (req, res) => {
@@ -79,14 +82,10 @@ export async function tenantWorker(req: Request, res: Response) {
   const a = Buffer.from("Bearer " + expected), b = Buffer.from(provided);
   if (!multiUserEnabled() || expected.length < 32 || a.length !== b.length || !timingSafeEqual(a,b)) return res.status(401).json({error:"Unauthorized worker."});
   try {
-    await tenantDb("rpc/tenant_retention", "POST", {});
-    const jobs: TenantJob[] = [];
-    for(let i=0;i<4;i++) {
-      const batch=await tenantDb<TenantJob[]>("rpc/tenant_claim_job","POST",{});
-      if(!batch.length) break;
-      jobs.push(batch[0]);
-    }
-    await Promise.all(jobs.map(processTenantJob));
-    return res.json({ok:true,processed:jobs.length});
+    const processed = await withOperationDeadline(240_000, async () => {
+      await tenantDb("rpc/tenant_retention", "POST", {});
+      return runTenantBatch();
+    });
+    return res.json({ok:true,processed});
   } catch { return res.status(503).json({error:"Worker storage unavailable."}); }
 }

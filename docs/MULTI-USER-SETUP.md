@@ -23,8 +23,8 @@ Official references:
    Existing `/my-agent` links remain supported. If `APP_BASE_URL` is absent, the
    bot uses Vercel deployment metadata; it never trusts a request Host header.
 3. Configure `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `TELEGRAM_BOT_TOKEN`,
-   `TELEGRAM_WEBHOOK_SECRET`, your existing AI credentials, and a randomly
-   generated `CRON_SECRET` of at least 32 characters. Never expose these to users.
+   `TELEGRAM_WEBHOOK_SECRET` and your existing AI credentials. Never expose these
+   to users. `CRON_SECRET` is optional for the default webhook processing mode.
 4. Set `MULTI_USER_ENABLED=true` and redeploy. It defaults off. When enabled,
    Business and private control messages use the new tenant system exclusively;
    they never fall through to legacy shared memories/settings/inbox. Existing
@@ -33,12 +33,16 @@ Official references:
 5. Re-register the webhook using the existing admin setup button so that
    `business_connection`, `business_message`, and `deleted_business_messages`
    and `callback_query` updates are enabled alongside existing types.
-6. Run `npm run worker` on an always-on host with `APP_BASE_URL` and `CRON_SECRET`.
-   This calls `/api/tenant-worker` every two seconds after each batch finishes.
-   Alternatively, use an authenticated external scheduler calling that endpoint.
-   Vercel does NOT run this long-lived process automatically. A one-minute
-   scheduler adds up to a minute of queue latency. No paid resources are provisioned
-   by this change. Worker hosting, AI tokens and database capacity need budgeting.
+6. Leave `TENANT_WORKER_MODE` unset or set it to `webhook` (the default). Each
+   authenticated incoming webhook that leaves a pending job starts bounded
+   background processing. Vercel uses `@vercel/functions` `waitUntil` so processing
+   continues after acknowledgement. A separate worker host and `CRON_SECRET` are
+   not required for new incoming replies. The function is configured for 300
+   seconds in `vercel.json`; enable Fluid compute if an older Vercel Hobby project
+   has it disabled. An ordinary long-lived Node server also processes these tasks.
+   Other serverless hosts need their own lifetime support or external mode.
+   No additional paid service is provisioned; hosting, AI and database usage still
+   count toward your provider limits.
 7. Test with two real consenting accounts before inviting 50+ people. Verify
    onboarding, correct identities, permissions, disconnect, pause, cleanup,
    worker operation, AI billing limits and private web access.
@@ -71,9 +75,8 @@ Official references:
   A failed refresh displays unavailable status rather than claiming auto-reply
   is still on. Reopen after the one-hour signed-session expiry.
 - Dashboard and Telegram controls share activation checks. Missing AI credentials,
-  missing worker authentication configuration, absent connections and revoked
-  reply rights produce actionable errors. Setting a worker secret does not prove
-  the worker is running: the operator must complete step 6 and monitor it. Enabling
+  absent connections and revoked reply rights produce actionable errors. Only
+  explicit external mode requires worker authentication configuration. Enabling
   applies to new messages and does not replay cancelled jobs or import history.
 - Pausing does not require AI configuration or current Telegram permissions. If
   the account pauses but queue cancellation fails, the UI reports that partial
@@ -97,8 +100,14 @@ inbox; conversations display chat IDs. Separate chats have separate AI context.
   incoming updates and serialize replies per connection/chat across workers.
 - Jobs wait at least 10 seconds before becoming eligible; this is not a promised
   10-second delivery time. AI latency, queue length and scheduling add time.
-- Each worker request processes up to four independent jobs concurrently. More
-  workers can claim separate jobs, subject to provider/Telegram/hosting limits.
+- Each batch processes up to four independent jobs concurrently. An automatic
+  invocation handles at most eight batches, with a shared 240-second deadline for
+  storage, AI and Telegram requests. It waits for new delayed work once when an
+  empty claim finds pending jobs. It does not spin indefinitely on uncertain sends.
+  More invocations can claim separate jobs, subject to provider/hosting limits.
+- Dismissing a blocked job from the private dashboard also wakes automatic
+  processing. Failed/uncertain deliveries themselves are not replayed. The
+  webhook and worker endpoint keep their separate authentication checks.
 - Stale claims and ambiguous sends become `uncertain`, not automatic retries.
   Later jobs in that chat wait until the user checks Telegram and dismisses the
   uncertain job. Failed generation/delivery jobs appear in the private dashboard.
@@ -121,8 +130,10 @@ per account per day. Excess incoming messages are not stored or auto-replied to.
 While the worker runs, message copies older than seven days are removed. Completed
 job/control dedup metadata expires after seven days; usage totals after 30 days.
 Minimal conversation IDs remain until a separate account erasure process is
-implemented. If the worker is stopped, automatic retention stops too; users can
-still clear their stored copies. The operator must monitor worker availability.
+implemented. In webhook mode, retention runs when a pending job wakes processing;
+there is no timer between invocations. With no incoming activity, maintenance can
+be delayed beyond seven days. Use an authenticated maintenance worker for scheduled
+retention, or clear stored copies manually. The operator must monitor failures.
 
 ## Validation and limits
 
@@ -147,3 +158,32 @@ Browser interaction tests use pinned jsdom 26.1.0, which supports the Node 20
 runtime declared by the project. CI validates both Node 20 and Node 24. This
 avoids the newer jsdom/Undici dependency combination that failed before browser
 tests could start under Node 20; no tests are skipped to work around it.
+
+## Optional external processing and recovery
+
+For a separate scheduler/worker, set a random `CRON_SECRET` of at least 32
+characters and run `npm run worker` with `APP_BASE_URL` and the same secret.
+It calls `GET /api/tenant-worker` using `Authorization: Bearer <CRON_SECRET>`
+every two seconds after each batch. Never put this secret in the dashboard or
+Telegram messages. The endpoint remains locked without it, including in webhook
+mode. Set `TENANT_WORKER_MODE=external` only if you want this separate process to
+be the sole queue runner. Merely setting a secret does not launch a process.
+
+Background execution is bounded, not a durable scheduler. On storage outages,
+function termination, or a burst exceeding the invocation budget, pending jobs
+remain in PostgreSQL for a later incoming webhook or an authenticated worker
+request. Stale claims and uncertain sends still require user review; they are
+never automatically resent. Monitor `tenant_background_worker_failed` logs and
+private dashboard job status. A separate maintenance worker is useful for
+recovery during idle periods and predictable retention.
+
+The worker-configuration fix needs no new SQL migration beyond the existing
+multi-user migration. Redeploy the code, reopen `/dashboard`, enable processing,
+and test a new permitted incoming message. Existing cancelled/failed history is
+not replayed. Regression tests cover activation without a cron secret, webhook
+acknowledgement before background work, duplicate and concurrent updates, delay,
+pause/revocation/cleanup, uncertain sends, storage errors and operation deadlines.
+
+Vercel references:
+- https://vercel.com/docs/functions/functions-api-reference/vercel-functions-package#waituntil
+- https://vercel.com/docs/functions/configuring-functions/duration

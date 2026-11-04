@@ -1,3 +1,4 @@
+import { operationSignal } from "./operation-deadline.js";
 import { buildSystemInstruction, buildUserPrompt, sanitizeHumanReply, replyTokenBudget } from "./reply-style.js";
 import { getAiRuntimeSettings } from "./store.js";
 
@@ -59,7 +60,7 @@ async function generateWithOpenAI(input: {
   const maxTokens = replyTokenBudget(input);
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST", signal: AbortSignal.timeout(30000),
+    method: "POST", signal: operationSignal(30000),
     headers: {
       "Content-Type": "application/json",
       Authorization: "Bearer " + apiKey
@@ -108,7 +109,7 @@ async function generateWithGemini(input: {
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
     {
-      method: "POST", signal: AbortSignal.timeout(30000),
+      method: "POST", signal: operationSignal(30000),
       headers: {
         "Content-Type": "application/json",
         "x-goog-api-key": apiKey

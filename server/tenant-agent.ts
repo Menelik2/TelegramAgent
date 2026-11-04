@@ -1,5 +1,6 @@
 import { checkOperationDeadline, operationSignal, withoutOperationDeadline } from "./operation-deadline.js";
 import { sleep } from "./features.js";
+import { tenantCredential, tenantCredentialStatus } from "./tenant-credentials.js";
 import { tenantWorkerMode } from "./tenant-worker-config.js";
 import { generateReply, isAiConfigured } from "./ai.js";
 import { decideReply, safeText } from "./policy.js";
@@ -48,7 +49,7 @@ export async function saveTenantSettings(owner: string, input: { enabled?: boole
     if (!current.consent_at && input.consent !== true) throw new TenantActivationError(400, "consent_required", "Agree to AI processing before enabling automatic replies.");
     const connections = await tenantDb<TenantConnection[]>("tenant_connections?owner_id=" + eq(owner));
     if (!connections.length) throw new TenantActivationError(409, "connection_required", "Connect this bot in Telegram’s Business/Secretary settings, select your chats and allow replies. Then try enabling again.");
-    if (!isAiConfigured()) throw new TenantActivationError(503, "ai_not_configured", "The service’s AI provider is not configured. Ask the operator to finish setup, then try again.");
+    if (!isAiConfigured() && !(await tenantCredentialStatus(owner)).configured) throw new TenantActivationError(503, "ai_not_configured", "Add your own Gemini API key in your dashboard, or ask the operator to configure the shared AI provider.");
     const workerMode = tenantWorkerMode();
     if (workerMode === "invalid") throw new TenantActivationError(503, "worker_mode_invalid", "The reply processing mode is invalid. Ask the operator to select webhook or external mode.");
     if (workerMode === "external" && (process.env.CRON_SECRET || "").length < 32) throw new TenantActivationError(503, "worker_not_configured", "External reply processing requires a configured worker and CRON_SECRET. Use webhook mode for automatic processing without a separate worker.");
@@ -181,7 +182,8 @@ export async function processTenantJob(job: TenantJob): Promise<void> {
     if (!(await tenantAccount(job.owner_id)).enabled) { await tenantFinish(job, "cancelled"); return; }
     if (!(await tenantBudget(job.owner_id))) { await tenantFinish(job, "failed"); return; }
     const history = await tenantThread(job.owner_id, job.connection_id, job.chat_id, 12);
-    const reply = await generateReply({ incomingText: message.body, tone: account.tone, language: account.language, replyLength: "concise", recentContext: history.filter(m => m.id < message.id).reverse().map(m => `${m.direction}: ${m.body}`).join("\n").slice(-12000) });
+    const credential = await tenantCredential(job.owner_id);
+    const reply = await generateReply({ incomingText: message.body, tone: account.tone, language: account.language, replyLength: "concise", recentContext: history.filter(m => m.id < message.id).reverse().map(m => `${m.direction}: ${m.body}`).join("\n").slice(-12000) }, credential ? { provider: "gemini", model: credential.model, fallbackEnabled: false, apiKey: credential.apiKey } : undefined);
     if (reply === "[ESCALATE]") { await tenantFinish(job, "cancelled"); return; }
     // Recheck after AI latency: pause, cleanup or revoked rights must stop queued sends.
     if (!(await tenantAccount(job.owner_id)).enabled || !(await verifyTenantConnection(job.owner_id, job.connection_id))) { await tenantFinish(job, "cancelled"); return; }

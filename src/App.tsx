@@ -196,6 +196,24 @@ function TenantUsersPanel({ apiRequest }: { apiRequest: (path: string, init?: Re
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [enabled, setEnabled] = useState(true);
+  const [viewOwner, setViewOwner] = useState("");
+  const [threads, setThreads] = useState<Array<{connection_id:string;chat_id:string;last_at:string}>>([]);
+  const [viewChat, setViewChat] = useState("");
+  const [supportMessages, setSupportMessages] = useState<Array<{id:number;body:string;direction:string;created_at:string}>>([]);
+  const [supportError, setSupportError] = useState("");
+  const [supportLoading, setSupportLoading] = useState(false);
+  const openSupport = async (ownerId:string) => {
+    setViewOwner(ownerId);setViewChat("");setThreads([]);setSupportMessages([]);setSupportError("");setSupportLoading(true);
+    try { const response=await apiRequest("/api/agent/tenant-inbox/"+encodeURIComponent(ownerId));const data=await readJson(response);if(!response.ok)throw new Error(data.error||"Access denied.");setThreads(data.conversations||[]); }
+    catch(e){setSupportError(e instanceof Error?e.message:"Could not open support inbox.");}
+    finally{setSupportLoading(false);}
+  };
+  const openThread = async (thread:{connection_id:string;chat_id:string}) => {
+    setViewChat(thread.connection_id+"~"+thread.chat_id);setSupportMessages([]);setSupportError("");setSupportLoading(true);
+    try {const response=await apiRequest("/api/agent/tenant-inbox/"+encodeURIComponent(viewOwner)+"/messages?connection="+encodeURIComponent(thread.connection_id)+"&chat="+encodeURIComponent(thread.chat_id));const data=await readJson(response);if(!response.ok)throw new Error(data.error||"Access denied.");setSupportMessages(data.messages||[]);}
+    catch(e){setSupportError(e instanceof Error?e.message:"Could not open messages.");}
+    finally{setSupportLoading(false);}
+  };
   const load = async (nextOffset = 0) => {
     setLoading(true); setError("");
     try {
@@ -220,8 +238,16 @@ function TenantUsersPanel({ apiRequest }: { apiRequest: (path: string, init?: Re
       {users.map(user => <div className="tenant-user-row" key={user.ownerId}>
         <div className="tenant-user-avatar"><Users size={18}/></div>
         <div className="tenant-user-details"><b>Telegram ID {user.ownerId}</b><span>Registered {user.registeredAt ? new Date(user.registeredAt).toLocaleDateString() : "—"}</span></div>
-        <div className="tenant-user-status"><span className={user.automationEnabled ? "permission-chip enabled" : "permission-chip"}>{user.automationEnabled ? "Auto-reply on" : "Paused"}</span><span>{user.readyConnections}/{user.connections} connections ready</span><span>{user.consentGiven ? "Consent recorded" : "Consent pending"}</span></div>
+        <div className="tenant-user-status"><span className={user.automationEnabled ? "permission-chip enabled" : "permission-chip"}>{user.automationEnabled ? "Auto-reply on" : "Paused"}</span><span>{user.readyConnections}/{user.connections} connections ready</span><span>{user.consentGiven ? "Consent recorded" : "Consent pending"}</span><button className="secondary-button compact" disabled={supportLoading} onClick={()=>void openSupport(user.ownerId)}>View inbox (with permission)</button></div>
       </div>)}
+      {viewOwner ? <section className="panel" style={{padding:16,marginTop:14}}><div className="section-head"><h3>Read-only support inbox · {viewOwner}</h3><button className="secondary-button compact" onClick={()=>{setViewOwner("");setThreads([]);setSupportMessages([]);setSupportError("");}}>Close</button></div>
+        <p className="helper-text">Available only with the owner's explicit permission. Access is audited. Telegram messages cannot be sent or deleted here.</p>
+        {supportError ? <p role="alert" className="helper-text">{supportError}</p> : null}
+        {supportLoading ? <p className="helper-text">Loading…</p> : null}
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>{threads.map(thread=><button className="secondary-button compact" key={thread.connection_id+"~"+thread.chat_id} onClick={()=>void openThread(thread)}>{thread.chat_id} · {new Date(thread.last_at).toLocaleDateString()}</button>)}</div>
+        {!supportLoading && !supportError && threads.length===0 ? <p className="helper-text">No stored conversations available.</p> : null}
+        {viewChat ? <div className="message-stream" style={{maxHeight:350,overflowY:"auto",marginTop:12}}>{supportMessages.map(message=><div className={"message-row "+(message.direction==="outgoing"?"outgoing":"")} key={message.id}><div className={"bubble "+(message.direction==="outgoing"?"bubble-ai":"bubble-them")}>{message.body}<time>{new Date(message.created_at).toLocaleString()}</time></div></div>)}</div> : null}
+      </section> : null}
       {!loading && !users.length && !error ? <p className="helper-text">No registered accounts found.</p> : null}
       {hasMore ? <button className="secondary-button" disabled={loading} onClick={() => void load(offset)}>{loading ? "Loading…" : "Load more users"}</button> : null}
     </div>

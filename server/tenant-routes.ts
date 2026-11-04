@@ -35,6 +35,14 @@ tenantRouter.get("/me", route(async (_req, res) => {
   const jobs = [...new Map([...blocked, ...recent].map(job => [job.update_id, job])).values()];
   return res.json({ account, connections, usage, jobs });
 }));
+// Explicit, independent permission for operator support access to stored inbox copies.
+tenantRouter.put("/admin-inbox-access", route(async (req, res) => {
+  if (typeof req.body?.enabled !== "boolean") return res.status(400).json({ error: "Choose whether to allow support inbox access." });
+  const id = owner(res);
+  const rows = await tenantDb<Array<{admin_inbox_access:boolean}>>(`tenant_accounts?owner_id=${eq(id)}`, "PATCH", { admin_inbox_access: req.body.enabled });
+  if (!rows[0]) return res.status(404).json({ error: "Account not found." });
+  return res.json({ ok: true, enabled: rows[0].admin_inbox_access === true });
+}));
 // Credentials are scoped to the verified Telegram Mini App owner and never returned.
 tenantRouter.get("/ai-key", route(async (_req, res) => {
   return res.json({ ok: true, ...await tenantCredentialStatus(owner(res)) });

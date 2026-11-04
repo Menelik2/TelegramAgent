@@ -43,7 +43,7 @@ export function buildSystemInstruction(input: ReplyInput): string {
     "- Mixed → same mix they used.",
     "- Never force one language onto pure use of the other.",
     "- In Amharic, write naturally in Ethiopic script.",
-    "- Match the particular personality of the sender without gender stereotypes. Never assume someone\'s feelings.",
+    "- Match the particular personality of the sender without gender stereotypes. Never assume someone's feelings.",
     "- Warmth and light teasing are fine when clearly welcome. If the person expresses romantic interest, avoid inventing intimacy.",
     "- If someone sets a boundary, respect that immediately. Do not pressure anyone to reveal emotions.",
     "- Respond in whatever it is: the language the sender uses.",
@@ -78,7 +78,7 @@ export function replyTokenBudget(input: ReplyInput): number {
 }
 
 export function sanitizeHumanReply(text: string): string {
-  let out = text.trim().replace(/^(?:Reply|Response|Owner|As the owner|Here'?s (?:my|a) reply)\s*[:\-]\s*/i, "").trim();
+  let out = text.trim().replace(/^(?:Reply|Response|Owner|As the owner|Here'?s (?:my|a) reply)\s*[:-]\s*/i, "").trim();
   if ((out.startsWith('"') && out.endsWith('"')) || (out.startsWith("'") && out.endsWith("'"))) {
     out = out.slice(1, -1).trim();
   }
@@ -92,3 +92,4 @@ export function sanitizeHumanReply(text: string): string {
   if (out.length > 4096) throw new Error("AI reply exceeds Telegram's message limit; no partial reply was sent.");
   return out;
 }
+

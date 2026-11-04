@@ -7,7 +7,7 @@ import { groupSenderScope, isGroupAddressedToBot, stripBotMention } from "./tele
 import { rateLimit } from "./rate-limit.js";
 import { generateReply, isAiConfigured, AiQuotaError, getAiProviderLabel } from "./ai.js";
 import { getFeatureConfig, isInQuietHours, pickReplyDelayMs, sleep, isSameLocalDay, featureStatusSummary } from "./features.js";
-import { claimUpdate, clearStoredInboxHistory, getLastActivityAt, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, recordEvent, recordMessage, releaseUpdate, getAiRuntimeSettings, saveAiRuntimeSettings, parseConversationId, listDashboardOwnerIds, addDashboardOwnerId, removeDashboardOwnerId } from "./store.js";
+import { claimUpdate, clearStoredInboxHistory, getLastActivityAt, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, getInboxConversation, recordEvent, recordMessage, releaseUpdate, getAiRuntimeSettings, saveAiRuntimeSettings, parseConversationId, listDashboardOwnerIds, addDashboardOwnerId, removeDashboardOwnerId } from "./store.js";
 import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getPreferences, getOwnerUserIds, saveOwnerUserIds, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setAutomationEnabled, setContact } from "./profile-store.js";
 
 const app = express();
@@ -36,10 +36,9 @@ async function authorizedBusinessConnection(connectionId: string): Promise<boole
   const response = await fetch("https://api.telegram.org/bot" + process.env.TELEGRAM_BOT_TOKEN + "/getBusinessConnection", {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ business_connection_id: connectionId })
   });
-  const body = await response.json() as { ok?: boolean; result?: { is_enabled?: boolean; user?: { id?: number } } };
-  return Boolean(response.ok && body.ok && body.result?.is_enabled && (await ownerUserIds()).has(String(body.result?.user?.id || "")));
+  const body = await response.json() as { ok?: boolean; result?: { id?: string; can_reply?: boolean; rights?: { can_reply?: boolean }; is_enabled?: boolean; user?: { id?: number } } };
+  return Boolean(response.ok && body.ok && body.result?.id === connectionId && body.result.is_enabled && (body.result.rights?.can_reply ?? body.result.can_reply) === true && (await ownerUserIds()).has(String(body.result?.user?.id || "")));
 }
-let automationEnabled = false;
 let lastWebhookAt: string | null = null;
 
 function constantTimeEqual(a: string, b: string): boolean {
@@ -333,7 +332,7 @@ app.post("/api/inbox/:chatId/reply", rateLimit({ name: "manual-reply", limit: 30
   if (!text) return res.status(400).json({ ok: false, error: "Enter a reply." });
   if (!process.env.TELEGRAM_BOT_TOKEN) return res.status(503).json({ ok: false, error: "Telegram bot token is not configured." });
   try {
-    const conversation = (await listInbox()).find(item => item.chatId === chatId && item.businessConnectionId === target.connectionId);
+    const conversation = await getInboxConversation(target.connectionId, chatId);
     if (!conversation) return res.status(404).json({ ok: false, error: "Conversation not found in the live inbox." });
     const manualPayload: Record<string, unknown> = { chat_id: chatId, text };
     if (conversation.businessConnectionId.startsWith("group:")) {
@@ -364,7 +363,6 @@ app.get("/api/activity", requireDashboardAuth, async (req, res) => {
 app.post("/api/agent/pause", async (_req, res) => {
   try {
     await setAutomationEnabled(false);
-    automationEnabled = false;
     return res.json({ ok: true, automationEnabled: false });
   } catch {
     return res.status(503).json({ ok: false, error: "Could not persist pause state." });
@@ -385,7 +383,6 @@ app.post("/api/agent/resume", async (_req, res) => {
   if (!hasAllowedContacts) return res.status(409).json({ ok: false, error: "Allow at least one contact in Inbox before enabling replies." });
   try {
     await setAutomationEnabled(true);
-    automationEnabled = true;
     return res.json({ ok: true, automationEnabled: true });
   } catch {
     return res.status(503).json({ ok: false, error: "Could not persist automation state." });
@@ -394,7 +391,6 @@ app.post("/api/agent/resume", async (_req, res) => {
 app.post("/api/agent/emergency-stop", async (_req, res) => {
   try {
     await setAutomationEnabled(false);
-    automationEnabled = false;
     return res.json({ ok: true, automationEnabled: false, message: "New automatic replies are disabled." });
   } catch {
     return res.status(503).json({ ok: false, error: "Could not persist emergency-stop state." });
@@ -571,7 +567,7 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
         username: String(message.from?.username || ""), direction: "incoming", text,
         createdAt: message.date ? new Date(Number(message.date) * 1000).toISOString() : undefined
       });
-    } catch (error) {
+    } catch {
       await releaseUpdate(updateId).catch(() => undefined);
       return res.status(503).json({ ok: false, error: "Could not persist incoming message." });
     }
@@ -707,3 +703,4 @@ export default app;
 if (process.env.VERCEL !== "1") {
   app.listen(port, () => console.log("TelegramAgent API listening on port " + port));
 }
+

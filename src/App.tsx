@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { isValidTelegramSenderId } from "./telegram-id";
-import { ArrowLeft, Bot, BrainCircuit, ContactRound, Gauge, Heart, MessageCircle, Pause, Play, Search, Send, Settings2, ShieldCheck, Sparkles, Zap } from "lucide-react";
+import { ArrowLeft, Bot, BrainCircuit, ContactRound, Gauge, MessageCircle, Pause, Play, Search, Send, Settings2, ShieldCheck, Sparkles, Zap } from "lucide-react";
 
 async function readJson(response: Response): Promise<Record<string, any>> {
   const raw = await response.text();
@@ -209,7 +208,6 @@ export default function App() {
   const [historyHasMore, setHistoryHasMore] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [dashboardToken, setDashboardToken] = useState(() => window.sessionStorage.getItem("dashboardApiToken") || "");
-  const [aiProvider, setAiProvider] = useState<"gemini" | "openai">("gemini");
   const [aiModel, setAiModel] = useState("gemini-3.5-flash-lite");
   const [aiModelTesting, setAiModelTesting] = useState(false);
   const [aiSettingsLoading, setAiSettingsLoading] = useState(false);
@@ -247,7 +245,6 @@ export default function App() {
       if (!r.ok) throw new Error(d.error || "Could not load AI settings.");
       if (!active) return;
       // This dashboard currently exposes Gemini 3.5 Flash-Lite as its supported model.
-      setAiProvider("gemini");
       setAiModel("gemini-3.5-flash-lite");
     }).catch(() => { /* defaults remain */ })
       .finally(() => { if (active) setAiSettingsLoading(false); });
@@ -401,16 +398,16 @@ export default function App() {
   };
   const clearInboxHistory = async () => {
     if (!dashboardToken || inboxLoading) return;
-    const confirmation = window.prompt("Delete ONLY the Telegram Agent database copies of all inbox messages? Original Telegram chats are unaffected. This cannot be undone. Type CLEAR HISTORY to confirm:");
+    const confirmation = window.prompt("Delete ONLY the Telegram Agent database copies of all inbox messages? Original Telegram chats are unaffected. Conversation IDs remain available; stored names and message text are removed. This cannot be undone. Type CLEAR HISTORY to confirm:");
     if (confirmation !== "CLEAR HISTORY") return;
     setInboxLoading(true);
     try {
       const response = await apiRequest("/api/inbox/history", { method: "DELETE", headers: { "x-confirm-inbox-cleanup": "DELETE_STORED_COPIES_ONLY" } });
       const data = await readJson(response);
       if (!response.ok) throw new Error(data.error || "Could not clear stored inbox history.");
-      setContacts([]);
-      setSelectedId("");
-      setMobileChatOpen(false);
+      setContacts(previous => previous.map(contact => ({ ...contact, name: contact.senderId || contact.id, handle: contact.senderId || contact.id, initials: "?", last: "", unread: undefined, messages: [] })));
+      setHistoryOffset(0); setHistoryHasMore(false);
+      await refreshLiveInbox();
       setInboxLive(true);
       flash(`Cleared ${Number(data.deletedCount || 0)} stored message copies. Telegram messages are unchanged.`);
     } catch (error) {
@@ -487,7 +484,7 @@ export default function App() {
             </div>
             <div className="integration-row ai-model-settings"><div className="ai-model-copy"><b>AI model</b><p>{aiSettingsLoading ? "Loading saved model…" : "Choose the Gemini model used for Telegram replies."}</p>
               <label className="field-label" htmlFor="ai-model-select">Gemini model</label>
-              <select id="ai-model-select" className="form-control" value={aiModel} onChange={e => { setAiProvider("gemini"); setAiModel(e.target.value); }}>
+              <select id="ai-model-select" className="form-control" value={aiModel} onChange={e => { setAiModel(e.target.value); }}>
                 <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite — fast and cost-efficient</option>
               </select>
               <p className="helper-text">Automatic model fallback is disabled. Replies use this selected model.</p>
@@ -500,7 +497,7 @@ export default function App() {
                   .catch(e => flash(e instanceof Error ? e.message : "Model test failed"))
                   .finally(() => setAiModelTesting(false));
               }}>{aiModelTesting ? "Testing…" : "Test model"}</button>
-              <button className="secondary-button compact" disabled={!dashboardToken || aiSettingsLoading} onClick={() => apiRequest("/api/agent/ai-settings", {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:"gemini",model:aiModel,fallbackEnabled:false})}).then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Save failed"); setAiProvider("gemini"); flash("AI model saved."); }).catch(e => flash(e instanceof Error ? e.message : "Save failed"))}>Save model</button>
+              <button className="secondary-button compact" disabled={!dashboardToken || aiSettingsLoading} onClick={() => apiRequest("/api/agent/ai-settings", {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({provider:"gemini",model:aiModel,fallbackEnabled:false})}).then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Save failed"); flash("AI model saved."); }).catch(e => flash(e instanceof Error ? e.message : "Save failed"))}>Save model</button>
             </div></div>
             <div className="integration-row"><div><b>AI status</b><p>{status?.aiConfigured ? (status.aiProvider || "ready") : "Not configured"}</p></div></div>
           </div>
@@ -574,3 +571,4 @@ export default function App() {
     {toast ? <div className="toast">{toast}</div> : null}
   </div>;
 }
+

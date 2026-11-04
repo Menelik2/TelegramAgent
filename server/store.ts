@@ -210,60 +210,51 @@ export async function listConversationMessages(chatId: string, offset = 0, limit
 /** Permanently remove only the dashboard's stored message copies. This never calls Telegram. */
 export async function clearStoredInboxHistory(): Promise<number> {
   if (!isPersistentStoreConfigured()) throw new Error("Supabase persistence is not configured.");
-  const response = await supabaseRequest("agent_messages?id=gt.0&select=id", {
-    method: "DELETE",
-    headers: { Prefer: "return=representation" }
+  const response = await supabaseRequest("rpc/clear_agent_message_history", {
+    method: "POST", body: "{}"
   });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`Supabase inbox cleanup failed (${response.status})${detail ? ": " + detail.slice(0, 180) : ""}`);
-  }
-  const rows = await response.json() as Array<{ id?: number }>;
-  return rows.length;
+  if (!response.ok) throw new Error(`Supabase inbox cleanup failed (${response.status}). Apply the conversation metadata migration before cleanup.`);
+  const count: unknown = await response.json();
+  if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) throw new Error("Invalid inbox cleanup result.");
+  return count;
+}
+
+function mapConversationRow(row: Record<string, unknown>): InboxConversation {
+  const connectionId = String(row.business_connection_id);
+  const chatId = String(row.chat_id);
+  return {
+    conversationId: conversationId(connectionId, chatId), chatId,
+    businessConnectionId: connectionId,
+    senderId: String(row.sender_id || ""),
+    senderName: String(row.sender_name || row.username || chatId),
+    username: String(row.username || ""),
+    lastMessage: String(row.message_text || "").slice(0, 280),
+    lastMessageAt: String(row.last_message_at),
+    lastDirection: row.last_direction === "outgoing" ? "outgoing" : "incoming",
+    messageCount: Number(row.message_count || 0)
+  };
 }
 
 export async function listInbox(): Promise<InboxConversation[]> {
   if (!isPersistentStoreConfigured()) return [];
-  const response = await supabaseRequest(
-    "agent_messages?select=chat_id,business_connection_id,sender_id,sender_name,username,direction,message_text,created_at&order=created_at.desc&limit=500"
-  );
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`Supabase inbox read failed (${response.status})${detail ? ": " + detail.slice(0, 180) : ""}`);
+  const conversations: InboxConversation[] = [];
+  // Page metadata, not message history; busy chats cannot hide older destinations.
+  for (let offset = 0; ; offset += 500) {
+    const response = await supabaseRequest(`agent_inbox?select=*&order=last_message_at.desc,business_connection_id.asc,chat_id.asc&limit=500&offset=${offset}`);
+    if (!response.ok) throw new Error(`Supabase inbox read failed (${response.status}).`);
+    const rows = await response.json() as Array<Record<string, unknown>>;
+    conversations.push(...rows.map(mapConversationRow));
+    if (rows.length < 500) return conversations;
   }
+}
+
+/** Exact destination lookup, independent of dashboard pagination and stored history. */
+export async function getInboxConversation(connectionId: string, chatId: string): Promise<InboxConversation | null> {
+  if (!isPersistentStoreConfigured()) return null;
+  const response = await supabaseRequest(`agent_inbox?select=*&business_connection_id=eq.${encodeURIComponent(connectionId)}&chat_id=eq.${encodeURIComponent(chatId)}&limit=1`);
+  if (!response.ok) throw new Error(`Supabase conversation lookup failed (${response.status}).`);
   const rows = await response.json() as Array<Record<string, unknown>>;
-  const byChat = new Map<string, InboxConversation>();
-  for (const row of rows) {
-    const chatId = String(row.chat_id || "");
-    if (!chatId) continue;
-    const text = String(row.message_text ?? row.text ?? "");
-    const connectionId = String(row.business_connection_id || "direct");
-    const scopedId = conversationId(connectionId, chatId);
-    const existing = byChat.get(scopedId);
-    if (!existing) {
-      byChat.set(scopedId, {
-        conversationId: scopedId,
-        chatId,
-        businessConnectionId: connectionId,
-        senderId: String(row.sender_id || ""),
-        senderName: String(row.sender_name || row.username || chatId),
-        username: String(row.username || ""),
-        lastMessage: text.slice(0, 280),
-        lastMessageAt: String(row.created_at || ""),
-        lastDirection: row.direction === "outgoing" ? "outgoing" : "incoming",
-        messageCount: 1
-      });
-    } else {
-      existing.messageCount += 1;
-      if (!existing.senderId && row.sender_id) existing.senderId = String(row.sender_id);
-      if (row.direction === "incoming" && row.sender_id) {
-        existing.senderId = String(row.sender_id);
-        if (row.sender_name) existing.senderName = String(row.sender_name);
-        if (row.username) existing.username = String(row.username);
-      }
-    }
-  }
-  return Array.from(byChat.values()).sort((a, b) => (a.lastMessageAt < b.lastMessageAt ? 1 : -1));
+  return rows[0] ? mapConversationRow(rows[0]) : null;
 }
 
 export async function getLastActivityAt(): Promise<string | null> {
@@ -373,3 +364,4 @@ export async function removeDashboardOwnerId(userId: string): Promise<void> {
   });
   if (!response.ok) throw new Error("Could not remove owner ID.");
 }
+

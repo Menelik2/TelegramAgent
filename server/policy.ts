@@ -30,5 +30,8 @@ export function decideReply(input: { enabled: boolean; allowedContact: boolean; 
 export function safeText(value: unknown, maxLength = 1800): string {
   if (typeof value !== "string") return "";
   const limit = Number.isFinite(maxLength) ? Math.max(0, Math.floor(maxLength)) : 1800;
+  // Strip non-printing controls from untrusted message text.
+  // eslint-disable-next-line no-control-regex
   return value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "").trim().slice(0, limit);
 }
+

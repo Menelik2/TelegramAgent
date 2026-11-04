@@ -64,6 +64,20 @@ export default function TenantApp() {
     api(`/messages?connection=${encodeURIComponent(selected.connection_id)}&chat=${encodeURIComponent(selected.chat_id)}`).then(d=>{if(!cancelled)setMessages(d.messages);}).catch(e=>{if(!cancelled)setNotice(e.message);});
     return()=>{cancelled=true;};
   },[selected,auth,api]);
+  // Keep the private conversation view current so delivered AI replies appear without a manual reload.
+  useEffect(()=>{
+    if(!auth||!selected)return;
+    let active=true;
+    const sync=async()=>{
+      if(document.visibilityState==="hidden"||actionPending.current)return;
+      try {
+        const data=await api(`/messages?connection=${encodeURIComponent(selected.connection_id)}&chat=${encodeURIComponent(selected.chat_id)}`);
+        if(active)setMessages(data.messages);
+      } catch { /* keep last successful conversation visible */ }
+    };
+    const timer=window.setInterval(()=>{void sync()},15000);
+    return()=>{active=false;window.clearInterval(timer)};
+  },[auth,selected,api]);
   const act=async(fn:()=>Promise<void>)=>{
     if(actionPending.current)return;
     actionPending.current=true;setBusy(true);setNotice("");
@@ -113,7 +127,7 @@ export default function TenantApp() {
       {!conversations.length&&<p>No conversations on this page. Connect your account and enable AI processing; new selected text messages will appear here.</p>}
       <div className="tenant-conversations">{conversations.map(c=><button className={selected?.connection_id===c.connection_id&&selected?.chat_id===c.chat_id?"selected":"tenant-secondary"} key={c.connection_id+":"+c.chat_id} onClick={()=>setSelected(c)}>Chat {c.chat_id}<small>{new Date(c.last_at).toLocaleString()}</small></button>)}</div>
       <div className="tenant-row"><button className="tenant-secondary" disabled={page===0||busy} onClick={()=>setPage(p=>p-1)}>Previous</button><span>Page {page+1}</span><button className="tenant-secondary" disabled={conversations.length<100||busy} onClick={()=>setPage(p=>p+1)}>Next</button></div>
-      {selected&&<><h3>Chat {selected.chat_id}</h3><div className="tenant-messages">{messages.length?messages.map(m=><div className={"tenant-message "+m.direction} key={m.id}><small>{m.direction==="incoming"?"Contact":"You / agent"}</small><p>{m.body}</p></div>):<p>No stored history. This conversation remains available.</p>}</div><label>Manual reply<textarea value={draft} maxLength={4096} onChange={e=>setDraft(e.target.value)}/></label><button disabled={busy||!draft.trim()} onClick={()=>void act(async()=>{const result=await api("/reply","POST",{connection:selected.connection_id,chat:selected.chat_id,text:draft});setDraft("");const d=await api(`/messages?connection=${encodeURIComponent(selected.connection_id)}&chat=${encodeURIComponent(selected.chat_id)}`);setMessages(d.messages);setNotice(result.stored?"Reply sent.":"Reply sent; the database copy could not be saved. Do not resend.");})}>Send reply</button></>}
+      {selected&&<><h3>Chat {selected.chat_id}</h3><p>Incoming messages and delivered AI replies appear below. This view refreshes every 15 seconds while open.</p><div className="tenant-messages">{messages.length?messages.map(m=><div className={"tenant-message "+m.direction} key={m.id}><small>{m.direction==="incoming"?"Contact":"You / agent"}</small><p>{m.body}</p></div>):<p>No stored history. This conversation remains available.</p>}</div><label>Manual reply<textarea value={draft} maxLength={4096} onChange={e=>setDraft(e.target.value)}/></label><button disabled={busy||!draft.trim()} onClick={()=>void act(async()=>{const result=await api("/reply","POST",{connection:selected.connection_id,chat:selected.chat_id,text:draft});setDraft("");const d=await api(`/messages?connection=${encodeURIComponent(selected.connection_id)}&chat=${encodeURIComponent(selected.chat_id)}`);setMessages(d.messages);setNotice(result.stored?"Reply sent.":"Reply sent; the database copy could not be saved. Do not resend.");})}>Send reply</button></>}
       </section></div>
       <section className="tenant-card"><h2>Recent reply jobs</h2><p>Failed or uncertain sends are never retried automatically. Check the Telegram conversation before dismissing them. An uncertain job pauses later replies in that chat.</p>{profile.jobs.map(j=><div className="tenant-row tenant-job" key={j.update_id}><span>Chat {j.chat_id} · {j.status}</span>{["failed","uncertain","pending"].includes(j.status)&&<button className="tenant-secondary" disabled={busy} onClick={()=>void act(async()=>{await api(`/jobs/${encodeURIComponent(j.update_id)}/cancel`,"POST");await refresh();})}>Dismiss</button>}</div>)}</section>
     </>}

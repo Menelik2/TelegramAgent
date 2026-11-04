@@ -101,7 +101,7 @@ async function generateWithGemini(input: {
   tone?: string;
   language?: string;
   replyLength?: string;
-}, selectedModel?: string): Promise<string> {
+}, selectedModel?: string, keyOverride?: string): Promise<string> {
   const apiKey = keyOverride || process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
   const model = selectedModel || process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;

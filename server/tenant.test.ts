@@ -216,6 +216,11 @@ describe("multi-user account boundary",()=>{
     expect((await db.query("select * from tenant_messages")).rows).toHaveLength(0);
     expect((await db.query("select * from tenant_conversations")).rows).toHaveLength(1);
   });
+  it("keeps old uncertain jobs visible even after many newer messages",async()=>{
+    await connect(1);await ingest(1,"1");await db.exec("update tenant_jobs set status='uncertain' where update_id='1'");
+    for(let n=2;n<25;n++)await ingest(1,String(n));
+    const me=await(await request("/me",1)).json();expect(me.jobs.some((j:{update_id:string})=>j.update_id==="1")).toBe(true);
+  });
   it("caps daily incoming storage independently of the reply budget",async()=>{
     await connect(1);await ingest(1,"1");await db.exec("update tenant_daily_usage set received=1000 where owner_id='1'");
     await ingest(1,"2");expect((await db.query("select * from tenant_messages")).rows).toHaveLength(1);

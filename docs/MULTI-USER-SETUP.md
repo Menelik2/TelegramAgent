@@ -112,7 +112,7 @@ uncertain sends, per-account budgets, manual replies and retention.
 No production migration, real customer onboarding, paid hosting provisioning,
 live Telegram delivery, or production load test is performed by this change.
 
-Local validation: 105 tests passed across 10 files, including 21 multi-user
+Local validation: 106 tests passed across 10 files, including 22 multi-user
 regressions. TypeScript, ESLint and production build passed. A browser check was
 attempted but could not launch because the environment has no Chromium binary;
 the dashboard has not been visually tested in a real Telegram client.

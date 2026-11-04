@@ -20,11 +20,13 @@ const route = (handler: (req: Request, res: Response) => Promise<unknown>) => (r
 };
 tenantRouter.get("/me", route(async (_req, res) => {
   const id = owner(res);
-  const [account, connections, usage, jobs] = await Promise.all([
+  const [account, connections, usage, recent, blocked] = await Promise.all([
     tenantAccount(id), tenantDb(`tenant_connections?owner_id=${eq(id)}`),
     tenantDb(`tenant_daily_usage?owner_id=${eq(id)}&order=day.desc&limit=1`),
-    tenantDb(`tenant_jobs?select=update_id,status,chat_id,created_at&owner_id=${eq(id)}&order=created_at.desc&limit=20`)
+    tenantDb<TenantJob[]>(`tenant_jobs?select=update_id,status,chat_id,created_at&owner_id=${eq(id)}&order=created_at.desc&limit=20`),
+    tenantDb<TenantJob[]>(`tenant_jobs?select=update_id,status,chat_id,created_at&owner_id=${eq(id)}&status=eq.uncertain&order=created_at.asc&limit=1000`)
   ]);
+  const jobs = [...new Map([...blocked, ...recent].map(job => [job.update_id, job])).values()];
   return res.json({ account, connections, usage, jobs });
 }));
 tenantRouter.put("/settings", route(async (req, res) => {

@@ -195,3 +195,32 @@ For independent users with Telegram controls and a private web dashboard, see
 [Multi-user setup](docs/MULTI-USER-SETUP.md). This feature defaults off and requires
 its migration, an authenticated queue worker and Telegram account connections.
 Do not distribute the administrator token or add customers to the global owner list.
+
+
+### Per-user Gemini API keys (multi-user mode)
+
+Connected Telegram Business users can open **/dashboard** in the bot and add their own
+Gemini API key in **Your Gemini API key**. Each key is encrypted server-side with
+AES-256-GCM, bound to the authenticated Telegram owner ID, and is never returned
+by the API. A user can replace or delete their own key. If no personal key exists,
+the agent uses the operator's configured provider.
+
+**Required before enabling personal keys:**
+1. Apply `supabase/migrations/20261105000000_tenant_ai_credentials.sql` after the
+   existing multi-user migration.
+2. Set `APP_ENCRYPTION_KEY` in Vercel to a unique random secret at least 32
+   characters long. Keep it server-side, back it up securely, and never change
+   it without migrating the encrypted credentials.
+3. Redeploy and open the private Telegram Mini App. API keys must never be
+   placed in `VITE_*` variables or browser local storage.
+
+Tenant replies pause for **10 seconds** before generation. The user can pause
+automation during the delay. The private Inbox shows incoming messages and
+saved outgoing replies, refreshing the open conversation every 15 seconds.
+A reply successfully sent to Telegram but not saved in Supabase cannot be
+reconstructed from the Bot API; Telegram private chats are not deleted by
+clearing database copies.
+
+The app does not validate a new personal key against Google when it is saved;
+the first reply can still fail if the key is revoked, has no quota, or cannot
+access the selected model. Monitor the user's reply-job status.

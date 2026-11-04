@@ -6,6 +6,7 @@ import { telegramAccount } from "./tenant-auth.js";
 import { multiUserEnabled, saveTenantSettings, TenantActivationError, telegramCall, verifyTenantConnection } from "./tenant-agent.js";
 import { tenantAccount, tenantBudget, tenantDb, tenantThread, eq, type TenantJob } from "./tenant-store.js";
 import { safeText } from "./policy.js";
+import { tenantCredentialStatus, saveTenantCredential, deleteTenantCredential } from "./tenant-credentials.js";
 
 export const tenantRouter = Router();
 tenantRouter.use((req, res, next) => {
@@ -33,6 +34,20 @@ tenantRouter.get("/me", route(async (_req, res) => {
   ]);
   const jobs = [...new Map([...blocked, ...recent].map(job => [job.update_id, job])).values()];
   return res.json({ account, connections, usage, jobs });
+}));
+// Credentials are scoped to the verified Telegram Mini App owner and never returned.
+tenantRouter.get("/ai-key", route(async (_req, res) => {
+  return res.json({ ok: true, ...await tenantCredentialStatus(owner(res)) });
+}));
+tenantRouter.put("/ai-key", route(async (req, res) => {
+  const key = req.body?.apiKey;
+  if (typeof key !== "string" || key.length > 256) return res.status(400).json({ error: "Enter a Gemini API key." });
+  await saveTenantCredential(owner(res), key.trim());
+  return res.json({ ok: true, configured: true, model: "gemini-3.5-flash-lite" });
+}));
+tenantRouter.delete("/ai-key", route(async (_req, res) => {
+  await deleteTenantCredential(owner(res));
+  return res.json({ ok: true, configured: false });
 }));
 tenantRouter.put("/automation", route(async (req, res) => {
   const { enabled, consent } = req.body || {};

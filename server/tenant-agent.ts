@@ -1,4 +1,5 @@
 import { checkOperationDeadline, operationSignal, withoutOperationDeadline } from "./operation-deadline.js";
+import { sleep } from "./features.js";
 import { tenantWorkerMode } from "./tenant-worker-config.js";
 import { generateReply, isAiConfigured } from "./ai.js";
 import { decideReply, safeText } from "./policy.js";
@@ -173,6 +174,11 @@ export async function processTenantJob(job: TenantJob): Promise<void> {
     const message = messages[0];
     if (!message || !account.consent_at || !decideReply({ enabled: account.enabled, allowedContact: true, text: message.body, duplicate: false }).allowed) { await tenantFinish(job, "cancelled"); return; }
     if (!(await verifyTenantConnection(job.owner_id, job.connection_id))) { await tenantFinish(job, "cancelled"); return; }
+    // Human-like pause for tenant replies. Keep the job processing until the delay finishes.
+    // Recheck the account after waiting so a user can pause replies during this window.
+    await sleep(10_000);
+    checkOperationDeadline();
+    if (!(await tenantAccount(job.owner_id)).enabled) { await tenantFinish(job, "cancelled"); return; }
     if (!(await tenantBudget(job.owner_id))) { await tenantFinish(job, "failed"); return; }
     const history = await tenantThread(job.owner_id, job.connection_id, job.chat_id, 12);
     const reply = await generateReply({ incomingText: message.body, tone: account.tone, language: account.language, replyLength: "concise", recentContext: history.filter(m => m.id < message.id).reverse().map(m => `${m.direction}: ${m.body}`).join("\n").slice(-12000) });

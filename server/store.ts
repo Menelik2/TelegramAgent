@@ -241,7 +241,7 @@ export async function listInbox(): Promise<InboxConversation[]> {
   // Page metadata, not message history; busy chats cannot hide older destinations.
   for (let offset = 0; ; offset += 500) {
     const response = await supabaseRequest(`agent_inbox?select=*&order=last_message_at.desc,business_connection_id.asc,chat_id.asc&limit=500&offset=${offset}`);
-    if (!response.ok) throw new Error(`Supabase inbox read failed (${response.status}).`);
+    if (!response.ok) throw new Error(response.status === 404 ? "Inbox metadata is missing. Apply migration 20261104000000_inbox_conversations.sql in Supabase, then refresh." : `Supabase inbox read failed (${response.status}).`);
     const rows = await response.json() as Array<Record<string, unknown>>;
     conversations.push(...rows.map(mapConversationRow));
     if (rows.length < 500) return conversations;

@@ -304,7 +304,7 @@ app.put("/api/agent/preferences", async (req, res) => {
   catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Could not save preferences." }); }
 });
 app.get("/api/inbox", requireDashboardAuth, async (_req, res) => {
-  try { return res.json({ ok: true, persistent: isPersistentStoreConfigured(), conversations: await listInbox() }); }
+  try { return res.json({ ok: true, persistent: isPersistentStoreConfigured(), multiUser: multiUserEnabled(), conversations: await listInbox() }); }
   catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Live inbox unavailable." }); }
 });
 app.delete("/api/inbox/history", rateLimit({ name: "inbox-cleanup", limit: 3, windowMs: 60_000 }), requireDashboardAuth, async (req, res) => {

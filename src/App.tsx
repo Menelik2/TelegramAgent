@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useWorkspaceInbox } from "./useWorkspaceInbox";
 import { ArrowLeft, Bot, BrainCircuit, ContactRound, Gauge, MessageCircle, Pause, Play, Search, Send, Settings2, ShieldCheck, Sparkles, Zap } from "lucide-react";
 
 async function readJson(response: Response): Promise<Record<string, any>> {
@@ -18,8 +19,6 @@ async function readJson(response: Response): Promise<Record<string, any>> {
 }
 
 type Status = { ok: boolean; automationEnabled: boolean; telegramConfigured: boolean; aiConfigured: boolean; aiProvider?: string | null; storageConfigured?: boolean; mode: string; lastWebhookAt?: string | null; lastActivityAt?: string | null; appBaseUrl?: string | null; ownerIdsConfigured?: boolean; features?: { replyDelayMs?: { min: number; max: number }; quietHours?: { enabled: boolean; startHour?: number; endHour?: number; timezone?: string }; dailyReplyLimit?: number | null } };
-type Contact = { id: string; senderId?: string; name: string; handle: string; initials: string; color: string; last: string; time: string; unread?: number; allowed: boolean; messages: { from: "them" | "ai"; text: string; time: string }[] };
-const initialContacts: Contact[] = [];
 const nav = [{ label: "Overview", icon: Gauge }, { label: "Inbox", icon: MessageCircle }, { label: "AI personality", icon: Sparkles }, { label: "Contacts", icon: ContactRound }, { label: "Memory", icon: BrainCircuit }, { label: "Automation", icon: Zap }, { label: "Settings", icon: Settings2 }];
 
 function MemoryPanel({ apiRequest, readJson, flash }: { apiRequest: (path: string, init?: RequestInit) => Promise<Response>; readJson: (r: Response) => Promise<Record<string, any>>; flash: (m: string) => void }) {
@@ -191,22 +190,11 @@ function ContactsPanel({ apiRequest, readJson, flash }: { apiRequest: (path: str
 
 export default function App() {
   const [page, setPage] = useState("Overview");
-  const [contacts, setContacts] = useState(initialContacts);
-  const [selectedId, setSelectedId] = useState("");
   const [query, setQuery] = useState("");
   const [automation, setAutomation] = useState(false);
   const [status, setStatus] = useState<Status | null>(null);
-  const [activityEvents, setActivityEvents] = useState<Array<{id?:number;kind:string;detail:string;createdAt?:string}>>([]);
-  const [liveMetrics, setLiveMetrics] = useState({ messages: 0, replies: 0, review: 0 });
-  const [inboxLive, setInboxLive] = useState(false);
-  const [inboxLoading, setInboxLoading] = useState(false);
-  const [replySending, setReplySending] = useState(false);
   const [mobileChatOpen, setMobileChatOpen] = useState(false);
   const [inboxFilter, setInboxFilter] = useState<"all" | "allowed" | "manual">("all");
-  const [inboxError, setInboxError] = useState("");
-  const [historyOffset, setHistoryOffset] = useState(0);
-  const [historyHasMore, setHistoryHasMore] = useState(false);
-  const [historyLoading, setHistoryLoading] = useState(false);
   const [dashboardToken, setDashboardToken] = useState(() => window.sessionStorage.getItem("dashboardApiToken") || "");
   const [aiModel, setAiModel] = useState("gemini-3.5-flash-lite");
   const [aiModelTesting, setAiModelTesting] = useState(false);
@@ -222,15 +210,19 @@ export default function App() {
   const [ownerIdsError, setOwnerIdsError] = useState("");
   const apiBase = import.meta.env.VITE_API_BASE_URL || "";
   const apiRequest = (path: string, init: RequestInit = {}) => fetch(`${apiBase}${path}`, { ...init, headers: { ...(init.headers || {}), "x-dashboard-token": dashboardToken } });
-  const [draft, setDraft] = useState("");
   const [toast, setToast] = useState("");
-  const selected = contacts.find(c => c.id === selectedId);
+  const flash = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 3500); };
+  const inbox = useWorkspaceInbox(dashboardToken, apiBase, page === "Inbox", flash);
+  const { selected, draft, setDraft, select: setSelectedId, refresh: refreshLiveInbox, loadOlder: loadOlderMessages, send: sendReply, toggle: toggleContact } = inbox;
+  const { contacts, selectedId, live: inboxLive, loading: inboxRefreshing, error: inboxError, events: activityEvents, metrics: liveMetrics, sending: replySending, hasMore: historyHasMore, olderLoading: historyLoading } = inbox.state;
+  const inboxLoading = inboxRefreshing || inbox.state.cleaning;
+  useEffect(() => { if (!selectedId) setMobileChatOpen(false); }, [selectedId]);
   const filtered = useMemo(() => {
     const q = query.toLowerCase().trim();
     return contacts.filter(c => {
       if (q && !(c.name + " " + c.handle).toLowerCase().includes(q)) return false;
       if (inboxFilter === "allowed") return c.allowed;
-      if (inboxFilter === "manual") return !c.allowed;
+      if (inboxFilter === "manual") return c.allowed === false;
       return true;
     });
   }, [contacts, query, inboxFilter]);
@@ -312,118 +304,10 @@ export default function App() {
     } catch (error) { setOwnerIdsError(error instanceof Error ? error.message : "Could not save owner IDs."); }
     finally { setOwnerIdsSaving(false); }
   };
-  const flash = (message: string) => { setToast(message); window.setTimeout(() => setToast(""), 2600); };
-  const refreshLiveInbox = async () => {
-    if (!dashboardToken) { flash("Enter your dashboard API token in Settings first."); return; }
-    setInboxLoading(true); setInboxError("");
-    try {
-      const [inboxResponse, contactsResponse, activityResponse] = await Promise.all([apiRequest("/api/inbox"), apiRequest("/api/agent/contacts"), apiRequest("/api/activity?limit=100")]);
-      const inboxData = await readJson(inboxResponse);
-      if (!inboxResponse.ok) throw new Error(inboxData.error || "Live inbox could not be loaded.");
-      const contactData = contactsResponse.ok ? await readJson(contactsResponse) : { contacts: [] };
-      if (activityResponse.ok) {
-        const activityData = await readJson(activityResponse);
-        const events = (activityData.events || []) as Array<{id?:number;kind:string;detail:string;createdAt?:string}>;
-        setActivityEvents(events);
-        setLiveMetrics({
-          messages: (inboxData.conversations || []).reduce((total: number, item: {messageCount?:number}) => total + Number(item.messageCount || 0), 0),
-          replies: events.filter(event => event.kind === "reply_sent" || event.kind === "manual_reply_sent").length,
-          review: events.filter(event => event.kind === "owner_review_required" || event.kind === "blocked" || event.kind === "delivery_failed").length
-        });
-      }
-      const permissions = new Map<string, boolean>((contactData.contacts || []).map((x: {senderId:string;enabled:boolean}) => [x.senderId, x.enabled]));
-      const colors = ["lilac", "blue", "mint", "peach"];
-      const mapped: Contact[] = (inboxData.conversations || []).map((item: {conversationId?:string;chatId:string;senderId?:string;senderName:string;username:string;lastMessage:string;lastMessageAt:string;lastDirection:string}, i:number) => ({
-        id: item.conversationId || item.chatId, senderId: item.senderId, name: item.senderName || item.username || item.chatId,
-        handle: item.username ? "@" + item.username : (item.senderId ? "id " + item.senderId : item.chatId),
-        initials: (item.senderName || item.username || item.chatId).split(/\s+/).slice(0,2).map((s:string)=>s[0]).join("").toUpperCase() || "?",
-        color: colors[i % colors.length], last: item.lastMessage,
-        time: item.lastMessageAt ? new Date(item.lastMessageAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) : "",
-        unread: item.lastDirection === "incoming" ? 1 : undefined,
-        allowed: item.senderId ? permissions.get(item.senderId) === true : false, messages: []
-      }));
-      setInboxLive(true);
-      setContacts(mapped);
-      setSelectedId(previous => mapped.some(item => item.id === previous) ? previous : (mapped[0]?.id || ""));
-      flash(mapped.length ? "Live Telegram inbox loaded." : "No conversations yet.");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Live inbox unavailable.";
-      setInboxError(message); flash(message);
-    } finally { setInboxLoading(false); }
-  };
-  useEffect(() => {
-    if (!dashboardToken) { setInboxLive(false); setContacts([]); setSelectedId(""); return; }
-    const timer = window.setTimeout(() => { void refreshLiveInbox(); }, 700);
-    return () => window.clearTimeout(timer);
-  }, [dashboardToken, apiBase]);
-  useEffect(() => {
-    if (page !== "Inbox" || !inboxLive || !selectedId || !dashboardToken) return;
-    let active = true;
-    setHistoryOffset(0); setHistoryHasMore(false);
-    apiRequest("/api/inbox/" + encodeURIComponent(selectedId) + "/messages?limit=100&offset=0").then(async response => {
-      const data = await readJson(response);
-      if (!response.ok) throw new Error(data.error || "Could not load conversation.");
-      if (!active) return;
-      setHistoryOffset((data.messages || []).length); setHistoryHasMore(Boolean(data.hasMore));
-      setContacts(previous => previous.map(contact => contact.id === selectedId ? { ...contact, messages: (data.messages || []).map((m: {direction:string;text:string;createdAt?:string}) => ({ from: m.direction === "outgoing" ? "ai" as const : "them" as const, text: m.text, time: m.createdAt ? new Date(m.createdAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) : "" })) } : contact));
-    }).catch(error => { if (active) flash(error instanceof Error ? error.message : "Could not load conversation."); });
-    return () => { active = false; };
-  }, [page, inboxLive, selectedId, dashboardToken]);
-  const loadOlderMessages = async () => {
-    if (!selectedId || historyLoading || !historyHasMore) return;
-    const chatId = selectedId;
-    setHistoryLoading(true);
-    try {
-      const response = await apiRequest("/api/inbox/" + encodeURIComponent(chatId) + "/messages?limit=100&offset=" + historyOffset);
-      const data = await readJson(response);
-      if (!response.ok) throw new Error(data.error || "Could not load older messages.");
-      const older = (data.messages || []).map((m: {direction:string;text:string;createdAt?:string}) => ({
-        from: m.direction === "outgoing" ? "ai" as const : "them" as const,
-        text: m.text,
-        time: m.createdAt ? new Date(m.createdAt).toLocaleString() : ""
-      }));
-      setContacts(previous => previous.map(contact => contact.id === chatId ? {...contact, messages: [...older, ...contact.messages]} : contact));
-      setHistoryOffset(Number(data.nextOffset || historyOffset + older.length));
-      setHistoryHasMore(Boolean(data.hasMore));
-    } catch (error) { flash(error instanceof Error ? error.message : "Could not load older messages."); }
-    finally { setHistoryLoading(false); }
-  };
-  const toggleContact = (id: string) => {
-    const contact = contacts.find(item => item.id === id);
-    if (!contact?.senderId) return;
-    const enabled = !contact.allowed;
-    apiRequest("/api/agent/contacts/" + encodeURIComponent(contact.senderId), {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled})})
-      .then(async response => { const data = await readJson(response); if (!response.ok) throw new Error(data.error || "Permission update failed."); setContacts(previous => previous.map(item => item.id === id ? {...item,allowed:enabled}:item)); flash(enabled ? "Contact allowed." : "Contact set to manual-only."); })
-      .catch(error => flash(error instanceof Error ? error.message : "Permission update failed."));
-  };
   const clearInboxHistory = async () => {
-    if (!dashboardToken || inboxLoading) return;
-    const confirmation = window.prompt("Delete ONLY the Telegram Agent database copies of all inbox messages? Original Telegram chats are unaffected. Conversation IDs remain available; stored names and message text are removed. This cannot be undone. Type CLEAR HISTORY to confirm:");
-    if (confirmation !== "CLEAR HISTORY") return;
-    setInboxLoading(true);
-    try {
-      const response = await apiRequest("/api/inbox/history", { method: "DELETE", headers: { "x-confirm-inbox-cleanup": "DELETE_STORED_COPIES_ONLY" } });
-      const data = await readJson(response);
-      if (!response.ok) throw new Error(data.error || "Could not clear stored inbox history.");
-      setContacts(previous => previous.map(contact => ({ ...contact, name: contact.senderId || contact.id, handle: contact.senderId || contact.id, initials: "?", last: "", unread: undefined, messages: [] })));
-      setHistoryOffset(0); setHistoryHasMore(false);
-      await refreshLiveInbox();
-      setInboxLive(true);
-      flash(`Cleared ${Number(data.deletedCount || 0)} stored message copies. Telegram messages are unchanged.`);
-    } catch (error) {
-      flash(error instanceof Error ? error.message : "Could not clear stored inbox history.");
-    } finally { setInboxLoading(false); }
-  };
-  const sendDemo = async () => {
-    if (!draft.trim() || !selected || replySending) return;
-    setReplySending(true);
-    try {
-      const response = await apiRequest("/api/inbox/" + encodeURIComponent(selected.id) + "/reply", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:draft.trim()})});
-      const data = await readJson(response);
-      if (!response.ok) throw new Error(data.error || "Telegram reply failed.");
-      setDraft(""); flash("Reply sent."); await refreshLiveInbox();
-    } catch (error) { flash(error instanceof Error ? error.message : "Telegram reply failed."); }
-    finally { setReplySending(false); }
+    if (!dashboardToken || inboxLoading || replySending) return;
+    const confirmation = window.prompt("Delete ONLY stored inbox message copies? Conversation IDs remain available. Original Telegram messages are unchanged. Type CLEAR HISTORY to confirm:");
+    if (confirmation === "CLEAR HISTORY") await inbox.clear();
   };
   return <div className="app-shell">
     <aside className="sidebar">
@@ -435,7 +319,8 @@ export default function App() {
       <header className="topbar"><div className="crumb">Workspace / <b>{page}</b></div><div className="connection-pill"><span className={"dot " + (status?.telegramConfigured ? "green" : "amber")}></span>{status?.telegramConfigured ? "Telegram connected" : "Telegram not connected"}</div></header>
       <div className="content">
         {page === "Inbox" ? <div className="inbox-page">
-          <div className="page-heading"><div><div className="eyebrow">YOUR CONVERSATIONS</div><h1>Inbox</h1></div><div className="inbox-heading-actions"><button className="secondary-button" onClick={() => void clearInboxHistory()} disabled={inboxLoading || !dashboardToken} title="Permanently delete only stored message copies in Supabase; original Telegram chats remain untouched">Clear database copies</button><button className="secondary-button" onClick={() => void refreshLiveInbox()} disabled={inboxLoading}>{inboxLoading ? "Loading…" : "Refresh"}</button></div></div>
+          <div className="page-heading"><div><div className="eyebrow">YOUR CONVERSATIONS</div><h1>Inbox</h1></div><div className="inbox-heading-actions"><button className="secondary-button" onClick={() => void clearInboxHistory()} disabled={inboxLoading || replySending || !dashboardToken} title="Permanently delete only stored message copies in Supabase; original Telegram chats remain untouched">Clear database copies</button><button className="secondary-button" onClick={() => void refreshLiveInbox()} disabled={inboxLoading || !dashboardToken}>{inboxLoading ? "Loading…" : "Refresh"}</button></div></div>
+          {inbox.state.multiUser ? <div className="security-note"><ShieldCheck size={18}/><div><b>Administrator inbox</b><p>This workspace shows legacy conversations. Each connected account has its own private inbox: open /dashboard in the Telegram bot.</p><a href="/my-agent">Open my private dashboard</a></div></div> : null}
           <div className="inbox-toolbar"><div className="inbox-count"><b>{filtered.length}</b> <span>conversations</span>{inboxLive ? <span className="live-label"><i/> Live</span> : null}</div><div className="searchbox"><Search size={16}/><input aria-label="Search conversations" placeholder="Search people or usernames…" value={query} onChange={e => setQuery(e.target.value)}/>{query ? <button className="clear-search" onClick={() => setQuery("")} aria-label="Clear search">×</button> : null}</div></div><div className="inbox-layout"><section className={"inbox-list " + (mobileChatOpen ? "mobile-hidden" : "")}>
             <div className="filter-row">
               <button className={inboxFilter === "all" ? "filter-active" : ""} onClick={() => setInboxFilter("all")}>All</button>
@@ -444,9 +329,9 @@ export default function App() {
             </div>
             {inboxError ? <p className="helper-text" style={{padding:"8px 16px",color:"#b91c1c"}}>{inboxError}</p> : null}
             {!dashboardToken ? <p className="helper-text" style={{padding:"12px 16px"}}>Enter dashboard token in Settings to load live inbox.</p> : null}
-            {inboxLoading && contacts.length === 0 ? <div className="inbox-empty"><span className="empty-icon">…</span><b>Loading conversations</b><p>Connecting to your Telegram inbox.</p></div> : null}{!inboxLoading && filtered.length === 0 ? <div className="inbox-empty"><span className="empty-icon"><MessageCircle size={20}/></span><b>{contacts.length ? "No matching conversations" : "Your inbox is empty"}</b><p>{contacts.length ? "Try another name or clear your search." : dashboardToken ? "New Telegram messages will appear here." : "Add your dashboard API token in Settings to load messages."}</p>{query ? <button className="text-link" onClick={() => setQuery("")}>Clear search</button> : null}</div> : null}{filtered.map(c => <button className={"conversation " + (selectedId === c.id ? "selected" : "")} key={c.id} onClick={() => { setSelectedId(c.id); setMobileChatOpen(true); }}><div className={"contact-avatar " + c.color}>{c.initials}</div><div className="conversation-copy"><div className="conversation-name"><b>{c.name}</b><time>{c.time}</time></div><p>{c.last || "No message text"}</p><div className="conversation-meta"><span className={c.allowed ? "permission-chip enabled" : "permission-chip"}>{c.allowed ? "AI enabled" : "Manual"}</span><span>{c.handle}</span></div></div></button>)}
+            {inboxLoading && contacts.length === 0 ? <div className="inbox-empty"><span className="empty-icon">…</span><b>Loading conversations</b><p>Connecting to your Telegram inbox.</p></div> : null}{!inboxLoading && !inboxError && filtered.length === 0 ? <div className="inbox-empty"><span className="empty-icon"><MessageCircle size={20}/></span><b>{contacts.length ? "No matching conversations" : "Your inbox is empty"}</b><p>{contacts.length ? "Try another name or clear your search." : dashboardToken ? "New Telegram messages will appear here." : "Add your dashboard API token in Settings to load messages."}</p>{query ? <button className="text-link" onClick={() => setQuery("")}>Clear search</button> : null}</div> : null}{filtered.map(c => <button className={"conversation " + (selectedId === c.id ? "selected" : "")} key={c.id} onClick={() => { setSelectedId(c.id); setMobileChatOpen(true); }}><div className={"contact-avatar " + c.color}>{c.initials}</div><div className="conversation-copy"><div className="conversation-name"><b>{c.name}</b><time>{c.time}</time></div><p>{c.last || "No message text"}</p><div className="conversation-meta"><span className={c.allowed ? "permission-chip enabled" : "permission-chip"}>{c.allowed === null ? "Permissions unavailable" : c.allowed ? "AI enabled" : "Manual"}</span><span>{c.handle}</span></div></div></button>)}
           </section>
-          {selected ? <section className={"chat-panel " + (mobileChatOpen ? "mobile-chat-active" : "")}><div className="chat-header"><button className="mobile-back-button" onClick={() => setMobileChatOpen(false)} aria-label="Back to conversations"><ArrowLeft size={18}/></button><div className={"contact-avatar " + selected.color}>{selected.initials}</div><div className="chat-contact"><b>{selected.name}</b><span>{selected.handle}</span></div><button className={"secondary-button compact " + (selected.allowed ? "pause-ai" : "allow-ai")} onClick={() => toggleContact(selected.id)} disabled={!selected.senderId}>{selected.allowed ? <><Pause size={14}/> Pause AI</> : <><Play size={14}/> Allow AI</>}</button></div><div className="message-stream">{historyHasMore ? <button className="secondary-button compact history-load-button" disabled={historyLoading} onClick={() => void loadOlderMessages()}>{historyLoading ? "Loading older messages…" : "Load older messages"}</button> : null}{selected.messages.length ? selected.messages.map((m,i) => <div key={i} className={"message-row " + (m.from === "ai" ? "outgoing" : "")}><div className={"bubble " + (m.from === "ai" ? "bubble-ai" : "bubble-them")}>{m.text}<time>{m.time}</time></div></div>) : <div className="message-empty"><MessageCircle size={22}/><b>No messages loaded</b><span>Refresh the inbox to try again.</span></div>}</div><div className="reply-box"><textarea value={draft} onChange={e => setDraft(e.target.value)} placeholder={"Message " + selected.name + "…"} rows={2} disabled={replySending} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void sendDemo(); } }}/><button className="send-button" onClick={() => void sendDemo()} disabled={!draft.trim() || replySending}><Send size={16}/> {replySending ? "Sending…" : "Send"}</button></div></section> : <section className={"chat-panel chat-placeholder " + (mobileChatOpen ? "mobile-chat-active" : "")}><MessageCircle size={28}/><b>Select a conversation</b><p>Choose someone from your inbox to read messages and reply.</p></section>}
+          {selected ? <section className={"chat-panel " + (mobileChatOpen ? "mobile-chat-active" : "")}><div className="chat-header"><button className="mobile-back-button" onClick={() => setMobileChatOpen(false)} aria-label="Back to conversations"><ArrowLeft size={18}/></button><div className={"contact-avatar " + selected.color}>{selected.initials}</div><div className="chat-contact"><b>{selected.name}</b><span>{selected.handle}</span></div><button className={"secondary-button compact " + (selected.allowed ? "pause-ai" : "allow-ai")} onClick={() => toggleContact(selected.id)} disabled={!selected.senderId || selected.allowed === null || inbox.state.permissionPending.includes(selected.senderId) || inbox.state.cleaning}>{selected.allowed ? <><Pause size={14}/> Pause AI</> : <><Play size={14}/> Allow AI</>}</button></div><div className="message-stream">{inbox.state.historyError ? <div role="alert" className="helper-text">{inbox.state.historyError}<button className="text-link" onClick={() => void refreshLiveInbox()}>Retry</button></div> : null}{inbox.state.historyLoading ? <p role="status" className="helper-text">Loading conversation…</p> : null}{historyHasMore ? <button className="secondary-button compact history-load-button" disabled={historyLoading} onClick={() => void loadOlderMessages()}>{historyLoading ? "Loading older messages…" : "Load older messages"}</button> : null}{selected.messages.length ? selected.messages.map(m => <div key={m.id} className={"message-row " + (m.from === "ai" ? "outgoing" : "")}><div className={"bubble " + (m.from === "ai" ? "bubble-ai" : "bubble-them")}>{m.text}<time>{m.time}</time></div></div>) : <div className="message-empty"><MessageCircle size={22}/><b>{inbox.state.historyLoading ? "Loading messages" : inbox.state.historyError ? "History unavailable" : "No stored messages"}</b><span>{inbox.state.historyLoading ? "Please wait…" : "Your Telegram conversation remains available. You can still send a reply."}</span></div>}</div><div className="reply-box"><textarea value={draft} onChange={e => setDraft(e.target.value)} placeholder={"Message " + selected.name + "…"} rows={2} aria-label="Reply message" maxLength={4096} disabled={replySending || inbox.state.cleaning} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); void sendReply(); } }}/><button className="send-button" onClick={() => void sendReply()} disabled={!draft.trim() || replySending || inbox.state.cleaning || !dashboardToken}><Send size={16}/> {replySending ? "Sending…" : "Send"}</button></div></section> : <section className={"chat-panel chat-placeholder " + (mobileChatOpen ? "mobile-chat-active" : "")}><MessageCircle size={28}/><b>Select a conversation</b><p>Choose someone from your inbox to read messages and reply.</p></section>}
           </div>
         </div> : page === "Settings" ? <div>
           <div className="page-heading"><h1>Settings</h1></div>

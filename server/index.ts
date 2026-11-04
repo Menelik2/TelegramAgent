@@ -10,11 +10,16 @@ import { getFeatureConfig, isInQuietHours, pickReplyDelayMs, sleep, isSameLocalD
 import { claimUpdate, clearStoredInboxHistory, getLastActivityAt, isPersistentStoreConfigured, listConversationMessages, listEvents, listInbox, getInboxConversation, recordEvent, recordMessage, releaseUpdate, getAiRuntimeSettings, saveAiRuntimeSettings, parseConversationId, listDashboardOwnerIds, addDashboardOwnerId, removeDashboardOwnerId } from "./store.js";
 import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getPreferences, getOwnerUserIds, saveOwnerUserIds, isProfileStoreConfigured, listContacts, listMemories, savePreferences, setAutomationEnabled, setContact } from "./profile-store.js";
 
+import { multiUserEnabled, tenantWebhook } from "./tenant-agent.js";
+import { tenantRouter, tenantWorker } from "./tenant-routes.js";
+
 const app = express();
 app.disable("x-powered-by");
 if (process.env.VERCEL === "1") app.set("trust proxy", 1);
 app.use(cors({ origin: (process.env.FRONTEND_URL || "http://localhost:5173").split(",").map(s => s.trim()), credentials: false }));
 app.use(express.json({ limit: "256kb" }));
+app.use("/api/user", tenantRouter);
+app.get("/api/tenant-worker", tenantWorker);
 const port = Number(process.env.PORT || 8787);
 const allowlist = new Set((process.env.TELEGRAM_ALLOWED_USER_IDS || "").split(",").map(s => s.trim()).filter(Boolean));
 async function ownerUserIds(): Promise<Set<string>> { return new Set(await getOwnerUserIds()); }
@@ -112,7 +117,7 @@ app.post("/api/agent/telegram/configure-webhook", async (_req, res) => {
     const webhookUrl = baseUrl + "/api/telegram/webhook";
     const telegramResponse = await fetch("https://api.telegram.org/bot" + token + "/setWebhook", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ url: webhookUrl, secret_token: secret, allowed_updates: ["business_connection", "business_message", "message", "edited_business_message", "edited_message"], drop_pending_updates: false })
+      body: JSON.stringify({ url: webhookUrl, secret_token: secret, allowed_updates: ["business_connection", "business_message", "message", "edited_business_message", "edited_message", "deleted_business_messages", "callback_query"], drop_pending_updates: false })
     });
     const raw = await telegramResponse.text();
     let result: { ok?: boolean; description?: string; result?: boolean };
@@ -426,7 +431,7 @@ app.get("/api/telegram/webhook", (_req, res) => {
     time: new Date().toISOString()
   });
 });
-app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 120, windowMs: 60_000 }), async (req, res) => {
+app.post("/api/telegram/webhook", (req, res, next) => multiUserEnabled() ? next() : rateLimit({ name: "telegram-webhook", limit: 120, windowMs: 60_000 })(req, res, next), async (req, res) => {
   const expected = process.env.TELEGRAM_WEBHOOK_SECRET || "";
   const provided = req.header("x-telegram-bot-api-secret-token") || "";
   if (!expected || !provided || !constantTimeEqual(provided, expected)) return res.status(401).json({ ok: false, error: "Invalid webhook secret." });
@@ -434,6 +439,14 @@ app.post("/api/telegram/webhook", rateLimit({ name: "telegram-webhook", limit: 1
   const update = req.body as Record<string, any>;
   const updateId = String(update?.update_id ?? "");
   if (!updateId) return res.status(400).json({ ok: false, error: "Missing update_id." });
+  if (multiUserEnabled()) {
+    try {
+      await tenantWebhook(update);
+      return res.json({ ok: true });
+    } catch {
+      return res.status(503).json({ ok: false, error: "Account processing unavailable; Telegram may retry." });
+    }
+  }
   try {
     const claimed = await claimUpdate(updateId);
     if (!claimed) return res.json({ ok: true, duplicate: true });

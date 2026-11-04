@@ -59,7 +59,7 @@ async function generateWithOpenAI(input: {
   const maxTokens = replyTokenBudget(input);
 
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
+    method: "POST", signal: AbortSignal.timeout(30000),
     headers: {
       "Content-Type": "application/json",
       Authorization: "Bearer " + apiKey
@@ -108,7 +108,7 @@ async function generateWithGemini(input: {
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
     {
-      method: "POST",
+      method: "POST", signal: AbortSignal.timeout(30000),
       headers: {
         "Content-Type": "application/json",
         "x-goog-api-key": apiKey
@@ -193,3 +193,4 @@ export async function generateReply(input: {
     }
   }
 }
+

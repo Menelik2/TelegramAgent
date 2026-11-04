@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.server.json && tsc --noEmit -p tsconfig.vercel.json",
     "test": "vitest run",
     "lint": "eslint .",
-    "smoke": "node scripts/smoke-test.mjs"
+    "smoke": "node scripts/smoke-test.mjs",
+    "worker": "node scripts/tenant-worker.mjs"
   },
   "dependencies": {
     "cors": "^2.8.5",

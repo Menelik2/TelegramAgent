@@ -187,3 +187,11 @@ The following are still deployment/product limitations and require environment-s
 - **AI security:** regex-based checks catch only known patterns. They cannot reliably detect every paraphrased or indirect prompt injection. Keep automation off for unknown contacts, review high-risk conversations, and test adversarial examples against the configured model.
 - **End-to-end validation:** CI and unit tests do not prove live delivery, webhook configuration, Supabase migrations, or provider availability. Perform a controlled Telegram Business test with a dedicated test contact before production.
 - **Operational safety:** use a separate test bot/business connection, keep secrets only in the API host, rotate credentials if exposed, and verify backups and incident recovery procedures.
+
+
+## Multi-user accounts
+
+For independent users with Telegram controls and a private web dashboard, see
+[Multi-user setup](docs/MULTI-USER-SETUP.md). This feature defaults off and requires
+its migration, an authenticated queue worker and Telegram account connections.
+Do not distribute the administrator token or add customers to the global owner list.

@@ -13,6 +13,7 @@ import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getP
 import { multiUserEnabled, tenantWebhook } from "./tenant-agent.js";
 import { scheduleTenantQueue } from "./tenant-queue.js";
 import { tenantRouter, tenantWorker } from "./tenant-routes.js";
+import { tenantDb } from "./tenant-store.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -303,6 +304,37 @@ app.put("/api/agent/preferences", async (req, res) => {
   if (typeof p.tone !== "string" || typeof p.language !== "string" || typeof p.replyLength !== "string" || typeof p.memoryEnabled !== "boolean") return res.status(400).json({ ok: false, error: "Invalid preferences payload." });
   try { await savePreferences({ tone: safeText(p.tone, 100), language: safeText(p.language, 100), replyLength: safeText(p.replyLength, 40), memoryEnabled: p.memoryEnabled }); return res.json({ ok: true }); }
   catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Could not save preferences." }); }
+});
+// Operator-only account overview. Never expose tenant private messages or chat identifiers.
+app.get("/api/agent/tenant-users", async (req, res) => {
+  if (!multiUserEnabled()) return res.json({ ok: true, enabled: false, users: [], hasMore: false });
+  const offset = Number(req.query.offset ?? 0);
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset > 100000) return res.status(400).json({ ok: false, error: "Invalid page offset." });
+  try {
+    const users = await tenantDb<Array<{ owner_id: string; enabled: boolean; consent_at: string | null; created_at: string }>>(
+      `tenant_accounts?select=owner_id,enabled,consent_at,created_at&order=created_at.desc,owner_id.asc&limit=51&offset=${offset}`
+    );
+    const page = users.slice(0, 50);
+    const ownerFilter = page.map(user => user.owner_id).filter(id => /^[1-9][0-9]{0,19}$/.test(id));
+    const connections = ownerFilter.length
+      ? await tenantDb<Array<{ owner_id: string; enabled: boolean; can_reply: boolean }>>(
+          `tenant_connections?select=owner_id,enabled,can_reply&owner_id=in.(${ownerFilter.join(",")})&limit=1000`
+        ) : [];
+    const counts = new Map<string, { total: number; ready: number }>();
+    for (const connection of connections) {
+      const current = counts.get(connection.owner_id) || { total: 0, ready: 0 };
+      current.total++;
+      if (connection.enabled && connection.can_reply) current.ready++;
+      counts.set(connection.owner_id, current);
+    }
+    return res.json({ ok: true, enabled: true, users: page.map(user => ({
+      ownerId: user.owner_id, automationEnabled: user.enabled, consentGiven: Boolean(user.consent_at),
+      registeredAt: user.created_at, connections: counts.get(user.owner_id)?.total || 0,
+      readyConnections: counts.get(user.owner_id)?.ready || 0
+    })), hasMore: users.length > 50, nextOffset: offset + page.length });
+  } catch {
+    return res.status(503).json({ ok: false, error: "Unable to load connected account overview. Check multi-user database setup." });
+  }
 });
 app.get("/api/inbox", requireDashboardAuth, async (_req, res) => {
   try { return res.json({ ok: true, persistent: isPersistentStoreConfigured(), multiUser: multiUserEnabled(), conversations: await listInbox() }); }

@@ -53,8 +53,8 @@ async function generateWithOpenAI(input: {
   tone?: string;
   language?: string;
   replyLength?: string;
-}, selectedModel?: string): Promise<string> {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+}, selectedModel?: string, keyOverride?: string): Promise<string> {
+  const apiKey = keyOverride || process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) throw new Error("OPENAI_API_KEY is not configured.");
   const model = selectedModel || process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL;
   const maxTokens = replyTokenBudget(input);
@@ -102,7 +102,7 @@ async function generateWithGemini(input: {
   language?: string;
   replyLength?: string;
 }, selectedModel?: string): Promise<string> {
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  const apiKey = keyOverride || process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
   const model = selectedModel || process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
 
@@ -155,7 +155,7 @@ export async function generateReply(input: {
   tone?: string;
   language?: string;
   replyLength?: string;
-}, overrideSettings?: { provider: "gemini" | "openai"; model: string; fallbackEnabled?: boolean }): Promise<string> {
+}, overrideSettings?: { provider: "gemini" | "openai"; model: string; fallbackEnabled?: boolean; apiKey?: string }): Promise<string> {
   const settings = overrideSettings || await getAiRuntimeSettings().catch(() => ({
     provider: (process.env.AI_PROVIDER?.trim().toLowerCase() === "openai" ? "openai" : "gemini") as "openai" | "gemini",
     model: process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL,
@@ -166,11 +166,11 @@ export async function generateReply(input: {
 
   const runPrimary = async (): Promise<string> => {
     if (provider === "openai") {
-      if (!process.env.OPENAI_API_KEY?.trim()) throw new Error("The selected OpenAI provider requires OPENAI_API_KEY on the server.");
-      return generateWithOpenAI(input, model);
+      if (!(overrideSettings?.apiKey || process.env.OPENAI_API_KEY?.trim())) throw new Error("The selected OpenAI provider requires OPENAI_API_KEY on the server.");
+      return generateWithOpenAI(input, model, overrideSettings?.apiKey);
     }
-    if (!process.env.GEMINI_API_KEY?.trim()) throw new Error("GEMINI_API_KEY is not configured.");
-    return generateWithGemini(input, model);
+    if (!(overrideSettings?.apiKey || process.env.GEMINI_API_KEY?.trim())) throw new Error("GEMINI_API_KEY is not configured.");
+    return generateWithGemini(input, model, overrideSettings?.apiKey);
   };
 
   try {
@@ -184,10 +184,10 @@ export async function generateReply(input: {
     try {
       if (provider === "openai") {
         if (!process.env.OPENAI_API_KEY?.trim()) throw error;
-        return await generateWithOpenAI(input, fallbackModel);
+        return await generateWithOpenAI(input, fallbackModel, overrideSettings?.apiKey);
       }
       if (!process.env.GEMINI_API_KEY?.trim()) throw error;
-      return await generateWithGemini(input, fallbackModel);
+      return await generateWithGemini(input, fallbackModel, overrideSettings?.apiKey);
     } catch (fallbackError) {
       throw new Error("Selected AI model and automatic fallback both failed. " +
         (fallbackError instanceof Error ? fallbackError.message : "Provider unavailable."));

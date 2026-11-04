@@ -339,6 +339,34 @@ app.get("/api/agent/tenant-users", async (req, res) => {
     return res.status(503).json({ ok: false, error: "Unable to load connected account overview. Check multi-user database setup." });
   }
 });
+// Operator access is read-only, limited to accounts that explicitly opted in.
+const validTenantOwner = (value: unknown): value is string => typeof value === "string" && /^[1-9][0-9]{0,19}$/.test(value);
+async function adminInboxConsent(ownerId: string): Promise<boolean> {
+  const rows = await tenantDb<Array<{ admin_inbox_access: boolean }>>(`tenant_accounts?select=admin_inbox_access&owner_id=eq.${encodeURIComponent(ownerId)}&limit=1`);
+  return rows[0]?.admin_inbox_access === true;
+}
+app.get("/api/agent/tenant-inbox/:ownerId", rateLimit({ name: "admin-tenant-inbox", limit: 30, windowMs: 60_000 }), async (req, res) => {
+  const id = req.params.ownerId;
+  if (!multiUserEnabled() || !validTenantOwner(id)) return res.status(400).json({ ok: false, error: "Invalid account." });
+  try {
+    if (!(await adminInboxConsent(id))) return res.status(403).json({ ok: false, error: "The account owner has not granted administrator inbox access." });
+    const conversations = await tenantDb<Array<{ connection_id:string; chat_id:string; last_at:string }>>(`tenant_conversations?select=connection_id,chat_id,last_at&owner_id=eq.${encodeURIComponent(id)}&order=last_at.desc&limit=50`);
+    // Log before disclosing the metadata.
+    await tenantDb("tenant_admin_inbox_audit", "POST", { owner_id: id, action: "conversations" });
+    return res.json({ ok: true, conversations });
+  } catch { return res.status(503).json({ ok: false, error: "Support inbox is unavailable. Check the migration." }); }
+});
+app.get("/api/agent/tenant-inbox/:ownerId/messages", rateLimit({ name: "admin-tenant-messages", limit: 30, windowMs: 60_000 }), async (req, res) => {
+  const id = req.params.ownerId;
+  const connection = String(req.query.connection || ""), chat = String(req.query.chat || "");
+  if (!multiUserEnabled() || !validTenantOwner(id) || !connection || connection.length > 256 || !/^-?[0-9]{1,22}$/.test(chat)) return res.status(400).json({ ok: false, error: "Invalid conversation." });
+  try {
+    if (!(await adminInboxConsent(id))) return res.status(403).json({ ok: false, error: "The account owner has not granted administrator inbox access." });
+    const messages = await tenantDb<Array<{ id:number; body:string; direction:string; created_at:string }>>(`tenant_messages?select=id,body,direction,created_at&owner_id=eq.${encodeURIComponent(id)}&connection_id=eq.${encodeURIComponent(connection)}&chat_id=eq.${encodeURIComponent(chat)}&order=created_at.desc,id.desc&limit=50`);
+    await tenantDb("tenant_admin_inbox_audit", "POST", { owner_id: id, action: "messages" });
+    return res.json({ ok: true, messages: messages.reverse() });
+  } catch { return res.status(503).json({ ok: false, error: "Support messages are unavailable. Check the migration." }); }
+});
 app.get("/api/inbox", requireDashboardAuth, async (_req, res) => {
   try { return res.json({ ok: true, persistent: isPersistentStoreConfigured(), multiUser: multiUserEnabled(), conversations: await listInbox() }); }
   catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Live inbox unavailable." }); }

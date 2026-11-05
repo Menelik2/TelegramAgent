@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useWorkspaceInbox } from "./useWorkspaceInbox";
+import WebhookPanel from "./WebhookPanel";
 import { ArrowLeft, Bot, BrainCircuit, ContactRound, Users, Gauge, MessageCircle, Pause, Play, Search, Send, Settings2, ShieldCheck, Sparkles, Zap } from "lucide-react";
 
 async function readJson(response: Response): Promise<Record<string, any>> {
@@ -442,9 +443,7 @@ export default function App() {
                 {!ownerIds.length && <p className="helper-text">No owners loaded. Configure Supabase and apply the owner IDs migration.</p>}
               </div>
             </div>
-            <div className="integration-row"><div><b>Telegram webhook</b><p>{status?.appBaseUrl || "APP_BASE_URL not set"}</p></div>
-              <button className="secondary-button compact" disabled={!dashboardToken} onClick={() => apiRequest("/api/agent/telegram/configure-webhook", { method: "POST" }).then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Failed"); flash(d.message || "Webhook configured."); }).catch(e => flash(e instanceof Error ? e.message : "Webhook failed"))}>Configure webhook</button>
-            </div>
+            <WebhookPanel key={dashboardToken} enabled={Boolean(dashboardToken)} apiRequest={apiRequest} readJson={readJson} />
             <div className="integration-row ai-model-settings"><div className="ai-model-copy"><b>AI model</b><p>{aiSettingsLoading ? "Loading saved model…" : "Choose the Gemini model used for Telegram replies."}</p>
               <label className="field-label" htmlFor="ai-model-select">Gemini model</label>
               <select id="ai-model-select" className="form-control" value={aiModel} onChange={e => { setAiModel(e.target.value); }}>

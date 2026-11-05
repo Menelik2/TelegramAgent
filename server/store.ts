@@ -23,6 +23,7 @@ export function isPersistentStoreConfigured(): boolean {
 async function supabaseRequest(path: string, init: RequestInit = {}): Promise<Response> {
   if (!supabaseUrl || !serviceKey) throw new Error("Supabase persistence is not configured.");
   return fetch(`${supabaseUrl}/rest/v1/${path}`, {
+    signal: operationSignal(15000),
     ...init,
     headers: {
       apikey: serviceKey,
@@ -55,8 +56,6 @@ export async function claimUpdate(updateId: string): Promise<boolean> {
   });
   if (response.status === 409) return false;
   if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    if (response.status === 404 || /does not exist|relation/i.test(body)) return true;
     throw new Error(`Supabase update claim failed (${response.status}).`);
   }
   return true;
@@ -171,8 +170,22 @@ export async function recordMessage(message: AgentMessage): Promise<void> {
     })
   });
   if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`Supabase message write failed (${response.status})${detail ? ": " + detail.slice(0, 200) : ""}`);
+    const failure = await response.json().catch(() => ({})) as { code?: string };
+    // Telegram retries after downstream failures. An already saved copy must not
+    // trap the update in a permanent 503 loop. Verify the exact destination and
+    // content before accepting a unique conflict; unrelated failures still throw.
+    if (response.status === 409 && failure.code === "23505" && message.updateId) {
+      const existing = await supabaseRequest(`agent_messages?select=business_connection_id,chat_id,sender_id,direction,message_text,telegram_message_id&update_id=eq.${encodeURIComponent(message.updateId)}&direction=eq.${message.direction}&limit=2`);
+      if (existing.ok) {
+        const rows = await existing.json() as Array<Record<string, unknown>>;
+        const row = rows[0];
+        if (rows.length === 1 && row.business_connection_id === message.businessConnectionId &&
+            row.chat_id === message.chatId && row.sender_id === message.senderId &&
+            row.direction === message.direction && row.message_text === message.text.slice(0, 4000) &&
+            (row.telegram_message_id ?? null) === (message.telegramMessageId ?? null)) return;
+      }
+    }
+    throw new Error(`Supabase message write failed (${response.status}).`);
   }
 }
 

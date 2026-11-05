@@ -13,7 +13,8 @@ import { addMemory, deleteMemory, getAutomationEnabled, getEnabledMemories, getP
 import { multiUserEnabled, tenantWebhook } from "./tenant-agent.js";
 import { scheduleTenantQueue } from "./tenant-queue.js";
 import { tenantRouter, tenantWorker } from "./tenant-routes.js";
-import { tenantDb } from "./tenant-store.js";
+import { tenantDb, TenantSchemaError } from "./tenant-store.js";
+import { inspectWebhookSetup, webhookOrigin, webhookRegistrationMessage, type TelegramWebhookInfo } from "./webhook-setup.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -111,14 +112,16 @@ app.put("/api/agent/owner-ids", async (req, res) => {
 app.post("/api/agent/telegram/configure-webhook", async (_req, res) => {
   const token = process.env.TELEGRAM_BOT_TOKEN || "";
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET || "";
-  const baseUrl = (process.env.APP_BASE_URL || (process.env.VERCEL_URL ? "https://" + process.env.VERCEL_URL : "")).replace(/\/$/, "");
+  const baseUrl = webhookOrigin();
   if (!token || !secret) return res.status(409).json({ ok: false, error: "Missing TELEGRAM_BOT_TOKEN or TELEGRAM_WEBHOOK_SECRET in Vercel Environment Variables. Add both to Production and redeploy." });
   if (!/^[A-Za-z0-9_-]{1,256}$/.test(secret)) return res.status(409).json({ ok: false, error: "TELEGRAM_WEBHOOK_SECRET must be 1–256 characters and contain only letters, numbers, underscores, or hyphens." });
   if (!baseUrl || !baseUrl.startsWith("https://")) return res.status(409).json({ ok: false, error: "Set APP_BASE_URL to your public HTTPS origin (for example https://telegramagenets.vercel.app) in Vercel Environment Variables, then redeploy." });
   try {
+    const setup = await inspectWebhookSetup();
+    if (!setup.ready) return res.status(503).json({ ok: false, error: "Webhook setup is incomplete. " + setup.checks.filter(c => !c.ok).map(c => c.detail).join(" "), setup });
     const webhookUrl = baseUrl + "/api/telegram/webhook";
     const telegramResponse = await fetch("https://api.telegram.org/bot" + token + "/setWebhook", {
-      method: "POST", headers: { "content-type": "application/json" },
+      method: "POST", signal: AbortSignal.timeout(15000), headers: { "content-type": "application/json" },
       body: JSON.stringify({ url: webhookUrl, secret_token: secret, allowed_updates: ["business_connection", "business_message", "message", "edited_business_message", "edited_message", "deleted_business_messages", "callback_query"], drop_pending_updates: false })
     });
     const raw = await telegramResponse.text();
@@ -126,34 +129,38 @@ app.post("/api/agent/telegram/configure-webhook", async (_req, res) => {
     try { result = JSON.parse(raw) as typeof result; }
     catch { return res.status(502).json({ ok: false, error: "Telegram returned a non-JSON response while configuring the webhook." }); }
     if (!telegramResponse.ok || !result.ok) return res.status(502).json({ ok: false, error: result.description || "Telegram rejected webhook configuration." });
-    const infoResponse = await fetch("https://api.telegram.org/bot" + token + "/getWebhookInfo");
-    const infoRaw = await infoResponse.text();
-    let info: { ok?: boolean; result?: { url?: string; pending_update_count?: number; last_error_message?: string } } = {};
-    try { info = JSON.parse(infoRaw) as typeof info; } catch { /* */ }
     await logEvent("webhook_configured", "Telegram webhook registered (business + private messages).", {});
-    const warning = info.result?.last_error_message;
-    return res.json({ ok: true, webhookUrl, pendingUpdates: info.result?.pending_update_count ?? 0, warning, message: warning ? "Webhook registered, but Telegram reports a delivery problem: " + warning : "Telegram webhook registered successfully. Next, allow a contact and enable automation." });
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : "Could not reach Telegram." });
+    try {
+      const infoResponse = await fetch("https://api.telegram.org/bot" + token + "/getWebhookInfo", { signal: AbortSignal.timeout(15000) });
+      const info = await infoResponse.json() as { ok?: boolean; result?: TelegramWebhookInfo };
+      if (!infoResponse.ok || !info.ok || !info.result) throw new Error("Webhook info unavailable");
+      return res.json({ ok: true, webhookUrl, setup, webhook: info.result, pendingUpdates: info.result.pending_update_count ?? 0, warning: info.result.last_error_message, message: webhookRegistrationMessage(info.result) });
+    } catch {
+      return res.json({ ok: true, webhookUrl, setup, warning: "Delivery status unavailable.", message: "Webhook registered, but delivery status could not be checked. Use Check delivery to retry." });
+    }
+  } catch {
+    return res.status(502).json({ ok: false, error: "Could not confirm webhook registration with Telegram. Use Check delivery before trying again." });
   }
 });
 
 app.get("/api/agent/telegram/webhook-info", async (_req, res) => {
+  const setup = await inspectWebhookSetup();
   const token = process.env.TELEGRAM_BOT_TOKEN || "";
-  if (!token) return res.status(409).json({ ok: false, error: "TELEGRAM_BOT_TOKEN is not configured." });
+  if (!token) return res.status(409).json({ ok: false, error: "TELEGRAM_BOT_TOKEN is not configured.", setup });
   try {
-    const infoResponse = await fetch("https://api.telegram.org/bot" + token + "/getWebhookInfo");
+    const infoResponse = await fetch("https://api.telegram.org/bot" + token + "/getWebhookInfo", { signal: AbortSignal.timeout(15000) });
     const info = await infoResponse.json() as { ok?: boolean; result?: Record<string, unknown>; description?: string };
-    if (!infoResponse.ok || !info.ok) return res.status(502).json({ ok: false, error: info.description || "Could not read webhook info." });
-    const baseUrl = (process.env.APP_BASE_URL || (process.env.VERCEL_URL ? "https://" + process.env.VERCEL_URL : "")).replace(/\/$/, "");
+    if (!infoResponse.ok || !info.ok) return res.status(502).json({ ok: false, error: "Telegram could not return webhook status. Verify the bot token and check Telegram availability.", setup });
+    const baseUrl = webhookOrigin();
     return res.json({
       ok: true,
+      setup,
       expectedUrl: baseUrl ? baseUrl + "/api/telegram/webhook" : null,
       webhook: info.result || {},
       matchesExpected: Boolean(baseUrl && info.result && String(info.result.url || "") === baseUrl + "/api/telegram/webhook")
     });
-  } catch (error) {
-    return res.status(502).json({ ok: false, error: error instanceof Error ? error.message : "Could not reach Telegram." });
+  } catch {
+    return res.status(502).json({ ok: false, error: "Could not reach Telegram to check delivery.", setup });
   }
 });
 
@@ -509,7 +516,8 @@ app.post("/api/telegram/webhook", (req, res, next) => multiUserEnabled() ? next(
       const pending = await tenantWebhook(update);
       if (pending) scheduleTenantQueue(deadlineAt);
       return res.json({ ok: true });
-    } catch {
+    } catch (error) {
+      console.error("webhook_processing_failed", { mode: "tenant", code: error instanceof TenantSchemaError ? error.code : "account_processing_unavailable", ...(error instanceof TenantSchemaError ? { migration: error.migration } : {}) });
       return res.status(503).json({ ok: false, error: "Account processing unavailable; Telegram may retry." });
     }
   }
@@ -628,13 +636,12 @@ app.post("/api/telegram/webhook", (req, res, next) => multiUserEnabled() ? next(
   if (isProfileStoreConfigured()) {
     try {
       const contact = (await listContacts()).find(item => item.senderId === senderId);
-      // A saved contact preference is authoritative. If storage cannot be read,
-      // only the explicit environment allowlist remains eligible; never open access.
+      // A saved contact preference is authoritative, including revocations.
       contactAllowed = contact ? contact.enabled : allowlist.has(senderId);
     } catch (error) {
       console.error("contact_permissions_read_failed", error instanceof Error ? error.message : "unknown");
-      contactAllowed = allowlist.has(senderId);
-      await logEvent("contact_permissions_unavailable", "Could not read saved contact permissions; checked explicit environment allowlist only.", { updateId, senderId, chatId });
+      await releaseUpdate(updateId).catch(() => undefined);
+      return res.status(503).json({ ok: false, error: "Contact permissions are unavailable; Telegram may retry." });
     }
   }
   if (isPersistentStoreConfigured()) {
@@ -679,6 +686,7 @@ app.post("/api/telegram/webhook", (req, res, next) => multiUserEnabled() ? next(
     } catch { /* best-effort */ }
   }
   if (!process.env.TELEGRAM_BOT_TOKEN) { await releaseUpdate(updateId).catch(() => undefined); return res.status(503).json({ ok: false, error: "Telegram bot token is not configured." }); }
+  let sendStarted = false;
   try {
     // Personalization is optional: a missing preferences/memory table must not
     // prevent an otherwise eligible contact from receiving an auto-reply.
@@ -734,20 +742,30 @@ app.post("/api/telegram/webhook", (req, res, next) => multiUserEnabled() ? next(
     // Add a short, randomized pause after the reply is ready, before sending it.
     const delayMs = pickReplyDelayMs(features);
     if (delayMs > 0) await sleep(delayMs);
+    // AI and delay can take seconds. Honor pauses and permission revocations
+    // made while generating instead of sending with stale authorization.
+    const currentContact = isProfileStoreConfigured() ? (await listContacts()).find(item => item.senderId === senderId) : undefined;
+    if (!(await getAutomationEnabled()) || !(currentContact ? currentContact.enabled : allowlist.has(senderId)) ||
+        (mode === "business" && !(await authorizedBusinessConnection(businessConnectionId)))) {
+      await logEvent("blocked", "Reply cancelled after a pause or permission change.", { updateId, senderId, chatId });
+      return res.json({ ok: true, ignored: true, reason: "Reply permission changed" });
+    }
     const sendPayload: Record<string, unknown> = { chat_id: chatId, text: reply };
     if (mode === "group") sendPayload.reply_parameters = { message_id: message.message_id, allow_sending_without_reply: false };
     if (mode === "business" && businessConnectionId && businessConnectionId !== "direct") {
       sendPayload.business_connection_id = businessConnectionId;
     }
+    sendStarted = true;
     const apiResponse = await fetch("https://api.telegram.org/bot" + process.env.TELEGRAM_BOT_TOKEN + "/sendMessage", {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(sendPayload)
+      method: "POST", signal: AbortSignal.timeout(15000), headers: { "content-type": "application/json" }, body: JSON.stringify(sendPayload)
     });
     const body = await apiResponse.json() as { ok?: boolean; description?: string };
-    if (!apiResponse.ok || !body.ok) {
+    if (body.ok === false) {
       await logEvent("delivery_failed", body.description || "Telegram delivery failed.", { updateId, senderId, chatId });
       await releaseUpdate(updateId).catch(() => undefined);
       return res.status(502).json({ ok: false, error: body.description || "Telegram delivery failed.", detail: body.description || "Unknown error." });
     }
+    if (!apiResponse.ok || body.ok !== true) throw new Error("Telegram delivery outcome is unknown.");
     if (isPersistentStoreConfigured()) {
       try {
         await recordMessage({
@@ -760,6 +778,13 @@ app.post("/api/telegram/webhook", (req, res, next) => multiUserEnabled() ? next(
     await logEvent("reply_sent", "Automatic reply delivered.", { updateId, senderId, chatId });
     return res.json({ ok: true, sent: true, mode });
   } catch (error) {
+    if (sendStarted) {
+      // Telegram may have delivered the message before the connection failed.
+      // Keep the durable update claim to prevent an automatic duplicate send.
+      console.error("webhook_delivery_uncertain", { mode });
+      await logEvent("delivery_uncertain", "Telegram send outcome is unknown. Check the chat before replying manually; this update will not be resent automatically.", { updateId, senderId, chatId });
+      return res.json({ ok: true, uncertain: true });
+    }
     const messageText = error instanceof Error ? error.message : "Reply processing failed.";
     await logEvent("reply_failed", messageText, { updateId, senderId, chatId });
     if (error instanceof AiQuotaError) {

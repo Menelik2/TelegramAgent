@@ -162,6 +162,7 @@ export default function TenantInbox({
               <input
                 type="search"
                 inputMode="numeric"
+                autoComplete="off"
                 aria-label="Search conversations by chat ID"
                 placeholder="Search chat ID…"
                 value={inbox.search}
@@ -433,6 +434,9 @@ export default function TenantInbox({
                 className="tenant-thread-messages"
                 ref={thread}
                 aria-busy={historyLoading || olderLoading}
+                role="log"
+                aria-label="Message history"
+                aria-relevant="additions"
                 onScroll={() => {
                   const el = thread.current;
                   if (el) {
@@ -522,7 +526,7 @@ export default function TenantInbox({
                 className="tenant-composer"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  if (replyAllowed && !historyLoading) void inbox.send();
+                  if (replyAllowed && !historyLoading && !sending && !clearing) void inbox.send();
                 }}
               >
                 {!replyAllowed && (
@@ -537,7 +541,8 @@ export default function TenantInbox({
                   id="tenant-reply"
                   value={draft}
                   maxLength={4096}
-                  disabled={!replyAllowed || clearing}
+                  disabled={!replyAllowed || clearing || sending}
+                  aria-label="Write a manual Telegram reply"
                   placeholder={
                     replyAllowed ? "Write a reply…" : "Reply access required"
                   }
@@ -546,6 +551,8 @@ export default function TenantInbox({
                     if (
                       e.key === "Enter" &&
                       !e.shiftKey &&
+                      e.currentTarget.matches(":focus") &&
+                      window.matchMedia("(pointer: fine)").matches &&
                       !e.nativeEvent.isComposing &&
                       e.keyCode !== 229
                     ) {
@@ -556,7 +563,7 @@ export default function TenantInbox({
                 />
                 <div className="tenant-composer-footer">
                   <small>
-                    Enter to send · Shift + Enter for a new line{" "}
+                    Desktop: Enter to send · Shift + Enter for a new line{" "}
                     <span>{draft.length}/4096</span>
                   </small>
                   <button

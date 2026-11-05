@@ -4,6 +4,7 @@ export type TenantConversation = {
   connection_id: string;
   chat_id: string;
   last_at: string;
+  ai_allowed?: boolean | null;
   last_message?: string | null;
   last_direction?: string | null;
   last_message_at?: string | null;
@@ -61,6 +62,7 @@ export function useTenantInbox(auth: string, active: boolean) {
     [notice, setNotice] = useState("");
   const [nextOffset, setNextOffset] = useState<number | null>(null),
     [nextBefore, setNextBefore] = useState<string | null>(null);
+  const [changingMode, setChangingMode] = useState<string | null>(null);
   const draftsRef = useRef(drafts);
   draftsRef.current = drafts;
   const scope = useMemo(
@@ -71,6 +73,9 @@ export function useTenantInbox(auth: string, active: boolean) {
       listSeq: 0,
       historySeq: 0,
       listQuery: "",
+      changingMode: false,
+      revision: 0,
+      confirmedModes: new Map<string, { revision: number; allowed: boolean }>(),
       sending: false,
       clearing: false,
       listPending: false,
@@ -93,6 +98,7 @@ export function useTenantInbox(auth: string, active: boolean) {
     setSelected(null);
     setMessages([]);
     setDrafts({});
+    setChangingMode(null);
     setNotice("");
     setListError("");
     setHistoryError("");
@@ -170,6 +176,7 @@ export function useTenantInbox(auth: string, active: boolean) {
       if (!auth || scope.clearing || scope.expired || scope.listQuery !== query)
         return;
       const seq = ++scope.listSeq;
+      const revision = scope.revision;
       scope.listPending = true;
       if (!background) setLoading(true);
       setListError("");
@@ -178,17 +185,32 @@ export function useTenantInbox(auth: string, active: boolean) {
           `/inbox?offset=${offset}&q=${encodeURIComponent(query)}`,
         );
         if (!scope.alive || seq !== scope.listSeq) return;
+        // A poll started before a confirmed change may still contain the old mode.
+        const rows = page.conversations.map((c) => {
+          const change = scope.confirmedModes.get(conversationKey(c));
+          return change && change.revision > revision
+            ? { ...c, ai_allowed: change.allowed }
+            : c;
+        });
+        if (scope.selected) {
+          const key = conversationKey(scope.selected);
+          const current = rows.find((c) => conversationKey(c) === key);
+          if (current) {
+            scope.selected = {
+              ...scope.selected,
+              ai_allowed: current.ai_allowed,
+            };
+            setSelected(scope.selected);
+          }
+        }
         setConversations((old) =>
           offset
             ? [
                 ...new Map(
-                  [...old, ...page.conversations].map((c) => [
-                    conversationKey(c),
-                    c,
-                  ]),
+                  [...old, ...rows].map((c) => [conversationKey(c), c]),
                 ).values(),
               ]
-            : page.conversations,
+            : rows,
         );
         setNextOffset(page.hasMore ? (page.nextOffset ?? offset + 100) : null);
         scope.paged = offset > 0;
@@ -263,6 +285,7 @@ export function useTenantInbox(auth: string, active: boolean) {
       connection_id: c.connection_id,
       chat_id: c.chat_id,
       last_at: c.last_at,
+      ai_allowed: c.ai_allowed,
     };
     scope.olderLoaded = false;
     scope.historyPending = false;
@@ -363,8 +386,55 @@ export function useTenantInbox(auth: string, active: boolean) {
       }
     }
   };
+  const setChatAi = async (allowed: boolean) => {
+    const chat = scope.selected;
+    if (!chat || scope.expired || scope.clearing || scope.changingMode) return;
+    const key = conversationKey(chat);
+    scope.changingMode = true;
+    setChangingMode(key);
+    setNotice("");
+    try {
+      const result = await request<{
+        connection: string;
+        chat: string;
+        allowed: boolean;
+      }>("/inbox/ai", "PUT", {
+        connection: chat.connection_id,
+        chat: chat.chat_id,
+        allowed,
+      });
+      if (!scope.alive || scope.expired) return;
+      if (
+        result.connection !== chat.connection_id ||
+        result.chat !== chat.chat_id ||
+        result.allowed !== allowed
+      )
+        throw new Error("Could not confirm the reply mode. Refresh the inbox.");
+      scope.confirmedModes.set(key, { revision: ++scope.revision, allowed });
+      setConversations((rows) =>
+        rows.map((c) =>
+          conversationKey(c) === key ? { ...c, ai_allowed: allowed } : c,
+        ),
+      );
+      if (scope.selected && conversationKey(scope.selected) === key) {
+        scope.selected = { ...scope.selected, ai_allowed: allowed };
+        setSelected(scope.selected);
+      }
+      setNotice(
+        allowed
+          ? `AI allowed for new messages in chat ${chat.chat_id} when account auto-reply is on.`
+          : `Chat ${chat.chat_id} is manual. A reply already sending may finish.`,
+      );
+    } catch (error) {
+      if (scope.alive && !scope.expired) setNotice(errorText(error));
+    } finally {
+      scope.changingMode = false;
+      if (scope.alive) setChangingMode(null);
+    }
+  };
   const clearHistory = async () => {
-    if (scope.clearing || scope.sending || scope.expired) return;
+    if (scope.clearing || scope.sending || scope.changingMode || scope.expired)
+      return;
     if (
       !window.confirm(
         "Delete your stored message copies and cancel queued replies? This cannot be undone. Conversation IDs and original Telegram messages stay. An in-progress send may complete.",
@@ -423,6 +493,8 @@ export function useTenantInbox(auth: string, active: boolean) {
     setDraft,
     send,
     clearHistory,
+    changingMode,
+    setChatAi,
     refresh,
     loading,
     historyLoading,

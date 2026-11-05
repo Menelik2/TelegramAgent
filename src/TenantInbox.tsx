@@ -59,13 +59,20 @@ export default function TenantInbox({
     connections.some((c) => c.id === connection && c.enabled && c.can_reply);
   const replyAllowed =
     selected && canReply(selected.connection_id) && !statusUnavailable;
-  const visible = conversations.filter(
-    (c) =>
-      filter === "all" ||
-      (filter === "ready"
-        ? canReply(c.connection_id)
-        : !canReply(c.connection_id)),
-  );
+  const visible = conversations.filter((c) => {
+    switch (filter) {
+      case "manual":
+        return c.ai_allowed === false;
+      case "ai":
+        return c.ai_allowed === true;
+      case "ready":
+        return canReply(c.connection_id);
+      case "readonly":
+        return !canReply(c.connection_id);
+      default:
+        return true;
+    }
+  });
   useEffect(() => {
     nearBottom.current = true;
     setAtBottom(true);
@@ -94,7 +101,7 @@ export default function TenantInbox({
         <div className="tenant-actions">
           <button
             className="tenant-secondary"
-            disabled={clearing || sending}
+            disabled={clearing || sending || inbox.changingMode !== null}
             onClick={() => void inbox.clearHistory()}
           >
             <Trash2 size={16} />
@@ -156,6 +163,8 @@ export default function TenantInbox({
             >
               {[
                 ["all", "All"],
+                ["ai", "AI allowed"],
+                ["manual", "Manual"],
                 ["ready", "Reply access"],
                 ["readonly", "Read only"],
               ].map(([value, label]) => (
@@ -216,6 +225,13 @@ export default function TenantInbox({
                     >
                       {canReply(c.connection_id) ? "Reply access" : "Read only"}
                     </span>
+                    <span>
+                      {c.ai_allowed == null
+                        ? "Mode unavailable"
+                        : c.ai_allowed
+                          ? "AI allowed"
+                          : "Manual"}
+                    </span>
                     <span title={c.connection_id}>
                       Connection {c.connection_id}
                     </span>
@@ -236,10 +252,10 @@ export default function TenantInbox({
                     ? "Try another numeric chat ID."
                     : filter !== "all"
                       ? "No loaded conversations match this filter."
-                      : "Connect your account in Telegram’s Business settings and enable automatic replies. New selected messages will appear here."}
+                      : "Connect your account in Telegram’s Business settings and enable your inbox in settings. New selected messages will appear here."}
                 </p>
                 {!inbox.search && filter === "all" && (
-                  <button onClick={onSettings}>Set up automatic replies</button>
+                  <button onClick={onSettings}>Set up inbox</button>
                 )}
               </div>
             )}
@@ -300,6 +316,34 @@ export default function TenantInbox({
                   {replyAllowed ? "Reply access" : "Read only"}
                 </span>
               </header>
+              <div className="tenant-chat-mode">
+                <span>
+                  {selected.ai_allowed == null
+                    ? "Per-chat AI setup pending"
+                    : selected.ai_allowed
+                      ? enabled
+                        ? "AI allowed"
+                        : "AI allowed · account paused"
+                      : "Manual replies"}
+                </span>
+                {selected.ai_allowed != null && (
+                  <button
+                    className="tenant-secondary"
+                    disabled={
+                      clearing ||
+                      inbox.changingMode !== null ||
+                      (!selected.ai_allowed && !replyAllowed)
+                    }
+                    onClick={() => void inbox.setChatAi(!selected.ai_allowed)}
+                  >
+                    {inbox.changingMode === key
+                      ? "Saving…"
+                      : selected.ai_allowed
+                        ? "Pause AI"
+                        : "Allow AI"}
+                  </button>
+                )}
+              </div>
               {inbox.historyError && (
                 <div className="tenant-inline-error" role="alert">
                   {inbox.historyError}

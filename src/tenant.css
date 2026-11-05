@@ -1030,3 +1030,22 @@
     font-size: 10px;
   }
 }
+
+.tenant-filters {
+  flex-wrap: wrap;
+}
+.tenant-chat-mode {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--tenant-line);
+  background: white;
+  font-size: 12px;
+  color: var(--tenant-muted);
+}
+.tenant-chat-mode .tenant-secondary {
+  padding: 6px 12px;
+}

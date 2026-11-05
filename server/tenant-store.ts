@@ -27,13 +27,15 @@ export async function tenantAccount(owner: string, registerIfMissing = false): P
   if (!rows[0]) throw new Error("Connect your account and send /start to the bot first.");
   return rows[0];
 }
-export async function tenantBudget(owner: string): Promise<boolean> {
+export function tenantDailyReplyLimit(): number {
   const raw = Number(process.env.TENANT_DAILY_REPLY_LIMIT || 100);
-  const limit = Number.isSafeInteger(raw) ? Math.max(1, Math.min(10000, raw)) : 100;
-  return tenantDb<boolean>("rpc/tenant_budget", "POST", { p_owner: owner, p_limit: limit });
+  return Number.isSafeInteger(raw) ? Math.max(1, Math.min(10000, raw)) : 100;
 }
-export async function tenantThread(owner: string, connection: string, chat: string, limit = 30): Promise<TenantMessage[]> {
-  return tenantDb<TenantMessage[]>(`tenant_messages?owner_id=${eq(owner)}&connection_id=${eq(connection)}&chat_id=${eq(chat)}&order=created_at.desc,id.desc&limit=${limit}`);
+export async function tenantBudget(owner: string): Promise<boolean> {
+  return tenantDb<boolean>("rpc/tenant_budget", "POST", { p_owner: owner, p_limit: tenantDailyReplyLimit() });
+}
+export async function tenantAiHistory(job: TenantJob): Promise<TenantMessage[]> {
+  return tenantDb<TenantMessage[]>(`tenant_messages?owner_id=${eq(job.owner_id)}&connection_id=${eq(job.connection_id)}&chat_id=${eq(job.chat_id)}&ai_context=eq.true&id=lt.${job.message_id}&order=created_at.desc,id.desc&limit=12`);
 }
 export async function tenantFinish(job: TenantJob, status: string): Promise<void> {
   await tenantDb("tenant_jobs?owner_id=" + eq(job.owner_id) + "&update_id=" + eq(job.update_id) + "&status=in.(processing,sending)", "PATCH", { status });

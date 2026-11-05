@@ -9,6 +9,7 @@ type Profile = {
     owner_id: string;
     enabled: boolean;
     consent_at: string | null;
+    manual_inbox?: boolean;
     tone: string;
     language: string;
     admin_inbox_access?: boolean;
@@ -173,7 +174,7 @@ export default function TenantApp() {
       setNotice(
         result.warning ||
           (result.account.enabled
-            ? "Automatic replies enabled for new messages in your selected Telegram chats."
+            ? "Automatic replies enabled for new messages in chats where you choose Allow AI."
             : "Automatic replies paused. Queued replies cancelled; a send already in progress may finish."),
       );
     });
@@ -314,6 +315,53 @@ export default function TenantApp() {
                     </section>
                   </div>
                   <section className="tenant-card tenant-settings">
+                    {!profile.account.consent_at && (
+                      <>
+                        <h2>Manual inbox</h2>
+                        <label className="tenant-toggle">
+                          <input
+                            type="checkbox"
+                            disabled={busy}
+                            checked={profile.account.manual_inbox === true}
+                            onChange={(event) => {
+                              const enabled = event.target.checked;
+                              void act(async () => {
+                                ++profileRequest.current;
+                                const result = await api(
+                                  "/manual-inbox",
+                                  "PUT",
+                                  { enabled },
+                                );
+                                ++profileRequest.current;
+                                setProfile((current) =>
+                                  current
+                                    ? {
+                                        ...current,
+                                        account: {
+                                          ...current.account,
+                                          manual_inbox: result.enabled,
+                                        },
+                                      }
+                                    : current,
+                                );
+                                setNotice(
+                                  result.enabled
+                                    ? "Manual inbox enabled for new messages."
+                                    : "Manual inbox storage paused.",
+                                );
+                              });
+                            }}
+                          />{" "}
+                          Save incoming messages for manual replies
+                        </label>
+                        <p>
+                          Your inbox stores copies from your selected Telegram
+                          chats for up to 7 days while the worker runs. You can
+                          clear them sooner.
+                        </p>
+                        <hr />
+                      </>
+                    )}
                     <h2>Automatic replies</h2>
                     <p>
                       Connect the bot in Telegram’s Business/Secretary settings,
@@ -351,10 +399,9 @@ export default function TenantApp() {
                       {!profile.account.consent_at && !consent
                         ? "Agree to AI processing above to enable replies. "
                         : ""}
-                      This switch saves immediately. It applies to new incoming
-                      messages. Selected messages are processed even after you
-                      close this dashboard. AI availability and Telegram
-                      permissions still apply.
+                      Choose Allow AI inside each chat you want the agent to
+                      answer. Other conversations use manual replies. AI
+                      availability and Telegram permissions still apply.
                     </p>
                     <button
                       className="tenant-secondary"

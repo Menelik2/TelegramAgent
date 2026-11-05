@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TenantApp from "./TenantApp";
 
-type Account={owner_id:string;enabled:boolean;consent_at:string|null;tone:string;language:string};
+type Account={owner_id:string;enabled:boolean;consent_at:string|null;tone:string;language:string;manual_inbox?:boolean};
 let account:Account, writes:{path:string;body:Record<string,unknown>}[], failure:string, inboxFailure:boolean, profileFailure:boolean;
 let hold:Promise<void>|undefined;
 const json=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers:{"content-type":"application/json"}});
@@ -17,6 +17,9 @@ beforeEach(()=>{
     const path=new URL(input,"https://app.test").pathname;
     if(path==="/api/user/me"&&profileFailure)return json({error:"Reopen the dashboard in Telegram to sign in again."},401);
     if(path==="/api/user/me")return json({account,connections:[{id:"c1",enabled:true,can_reply:true}],jobs:[],usage:[]});
+    if(path==="/api/user/manual-inbox"){
+      const body=JSON.parse(String(init.body));writes.push({path,body});account.manual_inbox=body.enabled;return json({enabled:account.manual_inbox});
+    }
     if(path==="/api/user/ai-key")return json({configured:false});
     if(path==="/api/user/inbox")return inboxFailure?json({error:"Inbox unavailable"},503):json({conversations:[]});
     if(path==="/api/user/automation"||path==="/api/user/settings"){
@@ -36,6 +39,12 @@ afterEach(()=>{cleanup();Reflect.deleteProperty(window,"Telegram");vi.unstubAllG
 async function open(){render(<TenantApp/>);fireEvent.click(screen.getByRole("button",{name:"Auto-reply & settings"}));await screen.findByRole("checkbox",{name:"Enable automatic replies"});}
 
 describe("private user automatic reply controls",()=>{
+  it("can start the manual inbox without enabling AI or agreeing to AI processing",async()=>{
+    await open();fireEvent.click(screen.getByRole("checkbox",{name:"Save incoming messages for manual replies"}));
+    await screen.findByText("Manual inbox enabled for new messages.");
+    expect(writes).toEqual([{path:"/api/user/manual-inbox",body:{enabled:true}}]);
+    expect(toggle().checked).toBe(false);expect(toggle().disabled).toBe(true);
+  });
   it("requires consent and persists activation immediately without saving preferences",async()=>{
     await open();expect(toggle().disabled).toBe(true);agree();fireEvent.click(toggle());
     await screen.findByText("Auto-reply on");expect(toggle().checked).toBe(true);

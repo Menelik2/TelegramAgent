@@ -2,7 +2,7 @@
 
 One shared bot can serve independent connected accounts. Each person connects
 it through Telegram's Business/Secretary bot settings, chooses permitted chats,
-and enables AI processing. Pressing Start alone does not grant inbox access.
+and chooses manual or AI replies per conversation. Pressing Start alone does not grant inbox access.
 The current Telegram documentation says connecting a business bot does not
 require Premium. Reply rights apply to eligible private chats with incoming
 messages in the last 24 hours. This does not import historical chats, Secret
@@ -18,6 +18,11 @@ Official references:
 1. Apply `supabase/migrations/20261104010000_multi_user_agent.sql`. This creates
    separate tables and functions; it does not delete or migrate legacy history.
    The earlier inbox migration is still required for the legacy admin inbox.
+   For per-chat controls, also apply
+   [20261105010000_tenant_chat_ai.sql](../supabase/migrations/20261105010000_tenant_chat_ai.sql)
+   in the Supabase SQL Editor before rolling out the dashboard and worker.
+   Existing and new conversations start in Manual. The migration cancels previously
+   pending and processing jobs. A Telegram send already in progress may complete.
 2. In BotFather, enable Business/Secretary support and configure your Mini App
    for `https://YOUR_DOMAIN/dashboard`. Set `APP_BASE_URL` to your HTTPS domain.
    Existing `/my-agent` links remain supported. If `APP_BASE_URL` is absent, the
@@ -65,7 +70,16 @@ Official references:
   the URL in an ordinary browser alone is not a login method. A verified first
   visit can create a paused account before `/start`; it does not grant consent
   or any connection permissions.
-- Dashboard: agree to AI processing, then turn on **Enable automatic replies**. The
+- Manual inbox: in **Auto-reply & settings**, users who only want manual chat can
+  select **Save incoming messages for manual replies**. New selected messages appear
+  in their inbox, where they can type replies using their Business connection.
+- For AI, agree to AI processing and turn on **Enable automatic replies**. Open
+  **Inbox**, select one conversation and choose **Allow AI**. Only new incoming
+  messages in allowed chats can trigger the worker. **Pause AI** returns that
+  conversation to Manual and cancels queued or generating replies for it.
+  The account switch pauses every chat. Clearing copies preserves each chat's choice.
+  Text received in manual mode and human-authored replies are excluded from AI context.
+  The
   switch saves immediately and reflects the server-confirmed state. **Save
   preferences** changes only tone/language; it cannot accidentally enable or
   pause automation. **Pause now** also works with incomplete preference fields.

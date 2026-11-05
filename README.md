@@ -213,7 +213,11 @@ usernames or permanent message snippets are collected. **Clear database copies**
 removes this owner’s saved text and cancels queued replies. Conversation IDs stay
 available, and Telegram originals are unaffected. A manual reply can be sent while
 automation is paused, subject to current Telegram permissions and the reply budget.
-The inbox changes use the existing multi-user schema and add no migration.
+Apply [the per-chat AI migration](supabase/migrations/20261105010000_tenant_chat_ai.sql)
+in Supabase. Existing and new conversations start in **Manual**. With account
+auto-reply enabled, open a chat and choose **Allow AI** for future messages or
+**Pause AI** to switch back to manual. To use only manual replies, choose
+**Save incoming messages for manual replies** in settings.
 
 ### Per-user Gemini API keys (multi-user mode)
 

@@ -4,7 +4,7 @@ import { tenantWorkerMode } from "./tenant-worker-config.js";
 import { generateReply, isAiConfigured } from "./ai.js";
 import { decideReply, safeText } from "./policy.js";
 import { tenantDashboardUrl } from "./tenant-dashboard.js";
-import { tenantAccount, tenantBudget, tenantDb, tenantFinish, tenantThread, eq, type TenantAccount, type TenantConnection, type TenantJob, type TenantMessage } from "./tenant-store.js";
+import { tenantAccount, tenantDailyReplyLimit, tenantDb, tenantFinish, tenantAiHistory, eq, type TenantAccount, type TenantConnection, type TenantJob, type TenantMessage } from "./tenant-store.js";
 
 export const multiUserEnabled = () => process.env.MULTI_USER_ENABLED === "true";
 type BusinessConnection = { id: string; user: { id: number }; is_enabled: boolean; rights?: { can_reply?: boolean } };
@@ -90,11 +90,11 @@ export async function tenantControls(owner: string, text: string): Promise<void>
     await tenantDb("rpc/tenant_register", "POST", { p_owner: owner });
   }
   const command = text.trim().split(/\s+/)[0].split("@")[0].toLowerCase();
-  let response = "Your private AI agent\n\n1. Connect this bot to your account using Telegram’s connected Business/Secretary bot settings. Choose the chats it may access and allow replies.\n2. Send /enable to consent to AI processing and enable replies. Selected incoming message text is sent to the configured AI provider and stored for up to 7 days while the worker runs, or until you clear it sooner.\n\n/pause — stop automatic replies\n/status — connection status\n/dashboard — private web dashboard\n/clearhistory — clear your stored copies\n\nStarting this bot alone does not give it access to your inbox.";
+  let response = "Your private AI agent\n\n1. Connect this bot to your account using Telegram’s connected Business/Secretary bot settings. Choose the chats it may access and allow replies. Open /dashboard to set up a manual inbox.\n2. Send /enable to consent to AI processing and enable automation, then choose Allow AI in each conversation. Approved incoming message text is sent to the configured AI provider and stored for up to 7 days while the worker runs, or until you clear it sooner.\n\n/pause — stop automatic replies\n/status — connection status\n/dashboard — private web dashboard\n/clearhistory — clear your stored copies\n\nStarting this bot alone does not give it access to your inbox.";
   if (command === "/enable") {
     try {
       await saveTenantSettings(owner, { enabled: true, consent: true });
-      response = "Automatic replies enabled for new messages in the chats you selected in Telegram. /pause stops automatic replies. /dashboard shows your settings and reply jobs. New selected messages are processed automatically, subject to AI availability and Telegram permissions.";
+      response = "Automatic replies enabled. Open /dashboard and choose Allow AI for each chat you want the agent to answer. /pause stops automatic replies. /dashboard shows your settings and reply jobs. Other chats use manual replies.";
     } catch (error) { response = error instanceof TenantActivationError ? error.message : "Could not confirm automatic reply settings were saved. Use /status to check, then retry /enable. If this continues, contact the operator."; }
   } else if (command === "/pause") {
     try {
@@ -170,7 +170,7 @@ export async function processTenantJob(job: TenantJob): Promise<void> {
   let sending = false;
   try {
     const account = await tenantAccount(job.owner_id);
-    const messages = job.message_id ? await tenantDb<TenantMessage[]>(`tenant_messages?owner_id=${eq(job.owner_id)}&id=eq.${job.message_id}`) : [];
+    const messages = job.message_id ? await tenantDb<TenantMessage[]>(`tenant_messages?owner_id=${eq(job.owner_id)}&connection_id=${eq(job.connection_id)}&chat_id=${eq(job.chat_id)}&ai_context=eq.true&id=eq.${job.message_id}`) : [];
     const message = messages[0];
     if (!message || !account.consent_at || !decideReply({ enabled: account.enabled, allowedContact: true, text: message.body, duplicate: false }).allowed) { await tenantFinish(job, "cancelled"); return; }
     if (!(await verifyTenantConnection(job.owner_id, job.connection_id))) { await tenantFinish(job, "cancelled"); return; }
@@ -178,10 +178,17 @@ export async function processTenantJob(job: TenantJob): Promise<void> {
     // Do not wait twice. Recheck a pause after the live connection check.
     checkOperationDeadline();
     if (!(await tenantAccount(job.owner_id)).enabled) { await tenantFinish(job, "cancelled"); return; }
-    if (!(await tenantBudget(job.owner_id))) { await tenantFinish(job, "failed"); return; }
-    const history = await tenantThread(job.owner_id, job.connection_id, job.chat_id, 12);
+    const history = await tenantAiHistory(job);
     const credential = await tenantCredential(job.owner_id);
-    const reply = await generateReply({ incomingText: message.body, tone: account.tone, language: account.language, replyLength: "concise", recentContext: history.filter(m => m.id < message.id).reverse().map(m => `${m.direction}: ${m.body}`).join("\n").slice(-12000) }, credential ? { provider: "gemini", model: credential.model, fallbackEnabled: false, apiKey: credential.apiKey } : undefined);
+    const readiness = await tenantDb<"ready" | "failed" | "cancelled">("rpc/tenant_prepare_ai_reply", "POST", {
+      p_owner: job.owner_id, p_connection: job.connection_id, p_chat: job.chat_id, p_update: job.update_id,
+      p_limit: tenantDailyReplyLimit()
+    });
+    if (readiness !== "ready") {
+      await tenantFinish(job, readiness === "failed" ? "failed" : "cancelled");
+      return;
+    }
+    const reply = await generateReply({ incomingText: message.body, tone: account.tone, language: account.language, replyLength: "concise", recentContext: history.reverse().map(m => `${m.direction}: ${m.body}`).join("\n").slice(-12000) }, credential ? { provider: "gemini", model: credential.model, fallbackEnabled: false, apiKey: credential.apiKey } : undefined);
     if (reply === "[ESCALATE]") { await tenantFinish(job, "cancelled"); return; }
     // Recheck after AI latency: pause, cleanup or revoked rights must stop queued sends.
     if (!(await tenantAccount(job.owner_id)).enabled || !(await verifyTenantConnection(job.owner_id, job.connection_id))) { await tenantFinish(job, "cancelled"); return; }
@@ -191,7 +198,7 @@ export async function processTenantJob(job: TenantJob): Promise<void> {
     const result = await telegramCall<{ message_id: number }>("sendMessage", { business_connection_id: job.connection_id, chat_id: job.chat_id, text: reply });
     await tenantFinish(job, "sent");
     // Copy failure must never cause the delivered Telegram message to be resent.
-    try { await tenantDb("tenant_messages", "POST", { owner_id: job.owner_id, connection_id: job.connection_id, chat_id: job.chat_id, direction: "outgoing", body: reply.slice(0,4096), telegram_id: result.message_id }); } catch { /* sent state is authoritative */ }
+    try { await tenantDb("tenant_messages", "POST", { owner_id: job.owner_id, connection_id: job.connection_id, chat_id: job.chat_id, direction: "outgoing", ai_context: true, body: reply.slice(0,4096), telegram_id: result.message_id }); } catch { /* sent state is authoritative */ }
   } catch {
     await withoutOperationDeadline(() => tenantFinish(job, sending ? "uncertain" : "failed"));
   }

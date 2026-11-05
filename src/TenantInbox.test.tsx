@@ -39,6 +39,8 @@ let listFailure: number,
   sendFailure: number,
   copyFailure: boolean,
   revoked: boolean;
+let modeHold: Promise<void> | undefined,
+  modeFailure = false;
 let sendHold: Promise<void> | undefined, readHold: Promise<void> | undefined;
 function Harness() {
   const inbox = useTenantInbox("signed-user", true);
@@ -76,12 +78,14 @@ beforeEach(() => {
       chat_id: "42",
       last_at: "2026-11-05T09:00:00Z",
       last_message: "First preview",
+      ai_allowed: false,
     },
     {
       connection_id: "c1",
       chat_id: "99",
       last_at: "2026-11-05T08:00:00Z",
       last_message: "Second preview",
+      ai_allowed: false,
     },
   ];
   history = {
@@ -92,6 +96,8 @@ beforeEach(() => {
   deletes = 0;
   listFailure = readFailure = sendFailure = 0;
   copyFailure = revoked = false;
+  modeHold = undefined;
+  modeFailure = false;
   sendHold = readHold = undefined;
   vi.spyOn(window, "confirm").mockReturnValue(true);
   vi.stubGlobal(
@@ -102,6 +108,19 @@ beforeEach(() => {
         (init.headers as Record<string, string>)["x-telegram-init-data"],
       ).toBe("signed-user");
       expect(url.pathname.startsWith("/api/user/")).toBe(true);
+      if (url.pathname.endsWith("/inbox/ai")) {
+        expect(init.method).toBe("PUT");
+        const { connection, chat, allowed } = JSON.parse(String(init.body));
+        if (modeHold) await modeHold;
+        if (modeFailure)
+          return json({ error: "Could not save reply mode." }, 503);
+        const match = conversations.find(
+          (c) => c.connection_id === connection && c.chat_id === chat,
+        );
+        if (!match) return json({ error: "Unknown chat" }, 404);
+        match.ai_allowed = allowed;
+        return json({ connection, chat, allowed });
+      }
       if (url.pathname.endsWith("/inbox")) {
         if (listFailure)
           return json(
@@ -183,6 +202,40 @@ afterEach(() => {
 });
 
 describe("user inbox workspace", () => {
+  it("confirms per-chat changes without changing the open chat or its draft after navigation", async () => {
+    await open();
+    let release!: () => void;
+    modeHold = new Promise((resolve) => {
+      release = resolve;
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Allow AI" }));
+    expect(
+      (screen.getByRole("button", { name: "Saving…" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+    openChat("99");
+    await screen.findByText("Second message");
+    fireEvent.change(composer(), { target: { value: "Manual draft for 99" } });
+    await act(async () => release());
+    expect(composer().value).toBe("Manual draft for 99");
+    expect(screen.getByRole("button", { name: "Allow AI" })).toBeTruthy();
+    openChat();
+    await screen.findByRole("button", { name: "Pause AI" });
+    expect(screen.getByText("AI allowed · account paused")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Pause AI" }));
+    await screen.findByRole("button", { name: "Allow AI" });
+    expect(composer().disabled).toBe(false);
+  });
+  it("keeps manual replies available when a mode update fails", async () => {
+    await open();
+    modeFailure = true;
+    fireEvent.change(composer(), { target: { value: "My manual response" } });
+    fireEvent.click(screen.getByRole("button", { name: "Allow AI" }));
+    await screen.findByText("Could not save reply mode.");
+    expect(screen.getByRole("button", { name: "Allow AI" })).toBeTruthy();
+    expect(send().disabled).toBe(false);
+    expect(composer().value).toBe("My manual response");
+  });
   it("keeps a separate draft for each chat and restores it after mobile back navigation", async () => {
     await open();
     fireEvent.change(composer(), { target: { value: "Draft for 42" } });

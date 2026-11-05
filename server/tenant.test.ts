@@ -64,10 +64,10 @@ async function sqlRest(url:URL,init:RequestInit) {
     let columns=select&&!select.includes("tenant_messages(")?select.split(",").map(ident).join(","):"*";
     if(select?.includes("tenant_messages(")) {
       expect(name).toBe("tenant_conversations");
-      expect(select).toBe("owner_id,connection_id,chat_id,last_at,tenant_messages(body,direction,created_at)");
+      expect(select).toBe("*,tenant_messages(body,direction,created_at)");
       expect(url.searchParams.get("tenant_messages.order")).toBe("id.desc");
       expect(url.searchParams.get("tenant_messages.limit")).toBe("1");
-      columns=`owner_id,connection_id,chat_id,last_at,coalesce((select jsonb_agg(recent) from (select body,direction,created_at from tenant_messages m where m.owner_id=tenant_conversations.owner_id and m.connection_id=tenant_conversations.connection_id and m.chat_id=tenant_conversations.chat_id order by id desc limit 1) recent),'[]'::jsonb) as tenant_messages`;
+      columns=`tenant_conversations.*,coalesce((select jsonb_agg(recent) from (select body,direction,created_at from tenant_messages m where m.owner_id=tenant_conversations.owner_id and m.connection_id=tenant_conversations.connection_id and m.chat_id=tenant_conversations.chat_id order by id desc limit 1) recent),'[]'::jsonb) as tenant_messages`;
     }
     query=`select ${columns} from ${ident(name)}${filter}`;
     const order=url.searchParams.get("order");
@@ -79,9 +79,16 @@ async function sqlRest(url:URL,init:RequestInit) {
 async function request(path:string,who=1,method="GET",body?:unknown,extra:Record<string,string>={}) {
   return nativeFetch(base+"/api/user"+path,{method,headers:{"x-telegram-init-data":signed(who),"content-type":"application/json",...extra},...(body===undefined?{}:{body:JSON.stringify(body)})});
 }
-async function connect(id:number,enabled=true) {
+async function allowFixtureChat(id:number, chat="42") {
+  // Existing worker scenarios start with a known conversation explicitly allowed by its owner.
+  await db.query("insert into tenant_conversations(owner_id,connection_id,chat_id) values($1,$2,$3) on conflict do nothing",[String(id),"c"+id,chat]);
+  const response = await request("/inbox/ai",id,"PUT",{connection:"c"+id,chat,allowed:true});
+  expect(response.status).toBe(200);
+}
+async function connect(id:number,enabled=true, allowChat=enabled) {
   await tenantDb("rpc/tenant_connect","POST",{p_owner:String(id),p_connection:"c"+id,p_enabled:true,p_reply:true});
   if(enabled) await db.query("update tenant_accounts set enabled=true,consent_at=now(),tone=$1 where owner_id=$2",["tone-"+id,String(id)]);
+  if(allowChat) await allowFixtureChat(id);
 }
 async function ingest(owner:number,update:string,chat="42") {
   await tenantDb("rpc/tenant_ingest","POST",{p_update:update,p_connection:"c"+owner,p_chat:chat,p_text:"private-for-"+owner,p_telegram:Number(update.replace(/\D/g,""))||1});
@@ -96,6 +103,7 @@ beforeAll(async()=>{
   await db.exec(await readFile("supabase/migrations/20261104010000_multi_user_agent.sql","utf8"));
   await db.exec(await readFile("supabase/migrations/20261105000000_admin_inbox_consent.sql","utf8"));
   await db.exec(await readFile("supabase/migrations/20261105000000_tenant_ai_credentials.sql","utf8"));
+  await db.exec(await readFile("supabase/migrations/20261105010000_tenant_chat_ai.sql","utf8"));
   vi.stubGlobal("fetch",vi.fn(async(input:string|URL|Request,init:RequestInit={})=>{
     const url=new URL(String(input));
     if(url.hostname==="tenant-storage.test") {
@@ -342,6 +350,7 @@ describe("automatic reply activation",()=>{
   it("processes a new selected message after activation through the worker",async()=>{
     await connect(1,false);await connect(2,false);
     expect((await request("/automation",1,"PUT",{enabled:true,consent:true})).status).toBe(200);
+    await allowFixtureChat(1);
     for(const id of [1,2])await tenantWebhook({update_id:300+id,business_message:{business_connection_id:"c"+id,chat:{type:"private",id:42},from:{id:42},message_id:301,text:"A new private message"}});
     await db.exec("update tenant_jobs set available_at=now()-interval '1 second'");
     const response=await nativeFetch(base+"/api/tenant-worker",{headers:{authorization:"Bearer "+"x".repeat(40)}});
@@ -391,6 +400,7 @@ describe("automatic webhook worker",()=>{
   it("enables by default without CRON_SECRET and replies after webhook acknowledgement",async()=>{
     vi.stubEnv("TENANT_WORKER_MODE","");vi.stubEnv("CRON_SECRET","");await connect(1,false);
     const enabled=await request("/automation",1,"PUT",{enabled:true,consent:true});expect(enabled.status).toBe(200);
+    await allowFixtureChat(1);
     let release!:()=>void;delayGate=new Promise(resolve=>{release=resolve;});
     const result=await webhook(incoming());expect(result.status).toBe(200);
     expect(waitUntil).toHaveBeenCalledTimes(1);expect(sent).toEqual([]);
@@ -515,5 +525,103 @@ describe("private workspace inbox",()=>{
       const response=await nativeFetch(base+"/api/user"+path,{method,headers:{"x-owner-id":"1"}});expect(response.status).toBe(401);
     }
     expect(sent).toEqual([]);
+  });
+});
+
+describe("per-conversation AI consent", () => {
+  const mode = (allowed: boolean, chat = "42", connection = "c1", who = 1) =>
+    request("/inbox/ai", who, "PUT", { connection, chat, allowed });
+  const incoming = (update: number, body: string, chat = "42", connection = "c1") =>
+    tenantWebhook({update_id: update, business_message: {business_connection_id: connection, chat: {id: Number(chat), type: "private"}, from: {id: Number(chat)}, message_id: update, text: body}});
+
+  it("lets a new user choose a manual inbox without consenting to AI, then stop collection", async () => {
+    await connect(1, false);
+    await incoming(1100, "before storage consent");
+    expect((await db.query("select * from tenant_messages")).rows).toHaveLength(0);
+    expect((await request("/manual-inbox", 1, "PUT", {enabled: true})).status).toBe(200);
+    expect(await incoming(1101, "manual message")).toBe(false);
+    expect((await (await request("/inbox")).json()).conversations[0]).toMatchObject({ai_allowed:false,last_message:"manual message"});
+    expect((await (await request("/me")).json()).account).toMatchObject({consent_at:null,enabled:false});
+    expect((await mode(true)).status).toBe(409);
+    expect((await request("/reply", 1, "POST", {connection:"c1",chat:"42",text:"Typed by owner"})).status).toBe(200);
+    expect((await request("/manual-inbox", 1, "PUT", {enabled:false})).status).toBe(200);
+    await incoming(1102, "after stopping storage");
+    expect((await db.query("select * from tenant_messages")).rows).toHaveLength(2);
+    expect(generateReply).not.toHaveBeenCalled();
+    expect(sent.map(m => m.text)).toEqual(["Typed by owner"]);
+  });
+
+  it("defaults to manual, answers only new allowed messages and excludes manual text from the prompt", async () => {
+    await connect(1, true, false);
+    expect(await incoming(1200, "private manual inbound")).toBe(false);
+    await request("/reply",1,"POST",{connection:"c1",chat:"42",text:"private human response"});
+    expect((await mode(true)).status).toBe(200);
+    expect(await incoming(1200, "private manual inbound")).toBe(false); // Telegram redelivery
+    expect(await incoming(1201, "approved incoming")).toBe(true);
+    await db.exec("update tenant_jobs set available_at=now()");
+    await processTenantJob(await claim());
+    expect(generateReply).toHaveBeenCalledTimes(1);
+    const prompt = vi.mocked(generateReply).mock.calls[0][0];
+    expect(prompt.incomingText).toBe("approved incoming");
+    expect(prompt.recentContext).toBe("");
+    expect(sent.map(m => m.text)).toEqual(["private human response","Test reply"]);
+    expect(await claim()).toBeUndefined();
+    await request("/history",1,"DELETE",undefined,{"x-confirm-inbox-cleanup":"DELETE_STORED_COPIES_ONLY"});
+    expect((await (await request("/inbox")).json()).conversations[0]).toMatchObject({ai_allowed:true,last_message:null});
+    await request("/automation",1,"PUT",{enabled:false});
+    expect(await incoming(1202, "global pause")).toBe(false);
+  });
+
+  it("isolates the choice across owners, Business connections and contacts sharing an account", async () => {
+    await connect(1, true, false); await connect(2, true, false);
+    await tenantDb("rpc/tenant_connect","POST",{p_owner:"1",p_connection:"c01",p_enabled:true,p_reply:true});
+    await incoming(1210,"first"); await incoming(1211,"second","99");
+    await incoming(1212,"second connection","42","c01"); await incoming(1213,"other owner","42","c2");
+    expect((await mode(true,"42","c2")).status).toBe(404);
+    expect((await mode(true,"404")).status).toBe(404);
+    expect((await mode(true)).status).toBe(200);
+    expect(await incoming(1214,"eligible")).toBe(true);
+    expect(await incoming(1215,"manual","99")).toBe(false);
+    expect(await incoming(1216,"manual","42","c01")).toBe(false);
+    expect(await incoming(1217,"manual","42","c2")).toBe(false);
+    revoked=true;
+    expect((await mode(true,"99")).status).toBe(403);
+    expect((await mode(false)).status).toBe(200);
+    expect((await request("/reply",1,"POST",{connection:"c1",chat:"42",text:"unauthorized"})).status).toBe(403);
+    expect((await db.query("select * from tenant_jobs where status='pending'")).rows).toHaveLength(0);
+    expect(sent).toEqual([]);
+  });
+
+  it("cancels pending and claimed jobs, even if AI is immediately allowed again", async () => {
+    await connect(1); await ingest(1,"1301"); await ingest(1,"1302");
+    const claimed = await claim();
+    await mode(false); await mode(true);
+    await processTenantJob(claimed);
+    expect(generateReply).not.toHaveBeenCalled(); expect(sent).toEqual([]);
+    expect((await db.query("select * from tenant_jobs where status='cancelled'")).rows).toHaveLength(2);
+    expect((await db.query("select used from tenant_daily_usage where owner_id='1'")).rows).toEqual([{used:0}]);
+    await ingest(1,"1303");
+    vi.mocked(generateReply).mockImplementationOnce(async () => {
+      await mode(false); await mode(true); return "Already generated";
+    });
+    await processTenantJob(await claim());
+    expect(generateReply).toHaveBeenCalledTimes(1); expect(sent).toEqual([]);
+  });
+
+  it("rolls back the permission change when cancellation fails and rejects unsigned or malformed changes", async () => {
+    await connect(1); await ingest(1,"1401");
+    await db.exec(`create function public.block_test_cancel() returns trigger language plpgsql as $$ begin raise exception 'simulated write failure'; end $$;
+      create trigger block_test_cancel before update on tenant_jobs for each row execute function public.block_test_cancel();`);
+    try {
+      expect((await mode(false)).status).toBe(503);
+      expect((await (await request("/inbox")).json()).conversations[0].ai_allowed).toBe(true);
+    } finally { await db.exec("drop trigger block_test_cancel on tenant_jobs; drop function public.block_test_cancel()"); }
+    expect((await request("/inbox/ai",1,"PUT",{connection:"c1",chat:"42",allowed:"false"})).status).toBe(400);
+    expect((await nativeFetch(base+"/api/user/inbox/ai",{method:"PUT",headers:{"x-owner-id":"1"}})).status).toBe(401);
+    for(const role of ["anon","authenticated"]){
+      await db.exec(`set role ${role}`);
+      try { await expect(db.query("select tenant_set_chat_ai('1','c1','42',true)")).rejects.toThrow(/permission denied/); }
+      finally { await db.exec("reset role"); }
+    }
   });
 });

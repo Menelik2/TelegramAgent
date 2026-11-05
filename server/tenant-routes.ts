@@ -67,17 +67,45 @@ tenantRouter.put("/settings", route(async (req, res) => {
   if ((enabled !== undefined && typeof enabled !== "boolean") || typeof tone !== "string" || !tone.trim() || tone.length > 160 || typeof language !== "string" || !language.trim() || language.length > 80) return res.status(400).json({ error: "Invalid settings." });
   return res.json({ ok: true, ...await saveTenantSettings(owner(res), { enabled, tone: safeText(tone,160), language: safeText(language,80), consent: consent === true }) });
 }));
+tenantRouter.put("/manual-inbox", route(async (req, res) => {
+  const enabled = req.body?.enabled;
+  if (typeof enabled !== "boolean") return res.status(400).json({ error: "Choose whether to store manual inbox messages." });
+  const rows = await tenantDb<Array<{ manual_inbox: boolean }>>(`tenant_accounts?owner_id=${eq(owner(res))}`, "PATCH", { manual_inbox: enabled });
+  if (!rows[0]) return res.status(404).json({ error: "Account not found." });
+  return res.json({ enabled: rows[0].manual_inbox });
+}));
+
+tenantRouter.put("/inbox/ai", route(async (req, res) => {
+  const { connection, chat, allowed } = req.body || {};
+  if (typeof connection !== "string" || !connection || connection.length > 256 ||
+      typeof chat !== "string" || !/^[1-9]\d{0,19}$/.test(chat) || typeof allowed !== "boolean") {
+    return res.status(400).json({ error: "Choose a conversation and its reply mode." });
+  }
+  const id = owner(res);
+  const rows = await tenantDb<unknown[]>(`tenant_conversations?select=chat_id&owner_id=${eq(id)}&connection_id=${eq(connection)}&chat_id=${eq(chat)}&limit=1`);
+  if (!rows.length) return res.status(404).json({ error: "Conversation not found." });
+  if (allowed) {
+    if (!(await tenantAccount(id)).consent_at) return res.status(409).json({ error: "Enable automatic replies in settings to give AI processing consent first." });
+    if (!(await verifyTenantConnection(id, connection))) return res.status(403).json({ error: "Telegram reply permission is unavailable for this connection." });
+  }
+  const saved = await tenantDb<boolean>("rpc/tenant_set_chat_ai", "POST", {
+    p_owner: id, p_connection: connection, p_chat: chat, p_allowed: allowed
+  });
+  if (!saved) return res.status(409).json({ error: "Conversation access changed. Refresh the inbox." });
+  return res.json({ connection, chat, allowed });
+}));
+
 tenantRouter.get("/inbox", route(async (req, res) => {
   const offset = Number(req.query.offset || 0);
   if (!Number.isSafeInteger(offset) || offset < 0) return res.status(400).json({ error: "Invalid page." });
   const search = String(req.query.q || "").trim();
   if (search && !/^\d{1,20}$/.test(search)) return res.status(400).json({ error: "Search using a numeric chat ID." });
-  type InboxRow = { owner_id: string; connection_id: string; chat_id: string; last_at: string; tenant_messages: Pick<TenantMessage,"body"|"direction"|"created_at">[] };
+  type InboxRow = { owner_id: string; connection_id: string; chat_id: string; last_at: string; ai_allowed?: boolean; tenant_messages: Pick<TenantMessage,"body"|"direction"|"created_at">[] };
   // The composite foreign key includes owner + connection + chat. Previews come from
   // removable copies, never from additional permanent personal-data storage.
-  const rows = await tenantDb<InboxRow[]>(`tenant_conversations?select=owner_id,connection_id,chat_id,last_at,tenant_messages(body,direction,created_at)&owner_id=${eq(owner(res))}${search ? `&chat_id=like.*${search}*` : ""}&order=last_at.desc,connection_id.asc,chat_id.asc&limit=101&offset=${offset}&tenant_messages.order=id.desc&tenant_messages.limit=1`);
-  const conversations = rows.slice(0,100).map(({ tenant_messages, ...conversation }) => ({
-    ...conversation, last_message: tenant_messages[0]?.body.slice(0,160) ?? null,
+  const rows = await tenantDb<InboxRow[]>(`tenant_conversations?select=*,tenant_messages(body,direction,created_at)&owner_id=${eq(owner(res))}${search ? `&chat_id=like.*${search}*` : ""}&order=last_at.desc,connection_id.asc,chat_id.asc&limit=101&offset=${offset}&tenant_messages.order=id.desc&tenant_messages.limit=1`);
+  const conversations = rows.slice(0,100).map(({ owner_id, connection_id, chat_id, last_at, ai_allowed, tenant_messages }) => ({
+    owner_id, connection_id, chat_id, last_at, ai_allowed: ai_allowed ?? null, last_message: tenant_messages[0]?.body.slice(0,160) ?? null,
     last_direction: tenant_messages[0]?.direction ?? null, last_message_at: tenant_messages[0]?.created_at ?? null
   }));
   return res.json({ conversations, hasMore: rows.length > 100, nextOffset: rows.length > 100 ? offset + 100 : null });

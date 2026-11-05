@@ -26,6 +26,7 @@ function signed(id:number,date=Math.floor(Date.now()/1000)) {
 const nativeFetch=globalThis.fetch;
 let db:PGlite, server:Server, base:string;
 let delayGate:Promise<void>|undefined;
+let missingResource="";
 let sent:Record<string,unknown>[]=[], revoked=false, brokenStorage=false, uncertainSend=false;
 let brokenAccountWrites=false, brokenJobWrites=false, brokenConnectionWrites=false, brokenMessageWrites=false;
 const unavailableConnections=new Set<string>();
@@ -107,6 +108,7 @@ beforeAll(async()=>{
   vi.stubGlobal("fetch",vi.fn(async(input:string|URL|Request,init:RequestInit={})=>{
     const url=new URL(String(input));
     if(url.hostname==="tenant-storage.test") {
+      if(missingResource && url.pathname.endsWith(missingResource))return json({code:"PGRST202",message:"Private database details must never be exposed"},404);
       if(brokenStorage || (brokenMessageWrites && init.method==="POST" && url.pathname.endsWith("tenant_messages")) || (brokenAccountWrites && init.method==="PATCH" && url.pathname.endsWith("tenant_accounts"))
         || (brokenJobWrites && init.method==="PATCH" && url.pathname.endsWith("tenant_jobs"))
         || (brokenConnectionWrites && url.pathname.endsWith("tenant_connect")))return json({},503);
@@ -126,7 +128,7 @@ beforeAll(async()=>{
 },30000);
 beforeEach(async()=>{
   await db.exec("truncate tenant_accounts,tenant_connections,tenant_conversations,tenant_messages,tenant_jobs,tenant_daily_usage,tenant_control_updates cascade");
-  delayGate=undefined;vi.mocked(waitUntil).mockClear();vi.stubEnv("TENANT_WORKER_MODE","external");
+  missingResource="";delayGate=undefined;vi.mocked(waitUntil).mockClear();vi.stubEnv("TENANT_WORKER_MODE","external");
   sent=[];revoked=brokenStorage=uncertainSend=brokenMessageWrites=brokenAccountWrites=brokenJobWrites=brokenConnectionWrites=false;
   unavailableConnections.clear();vi.mocked(isAiConfigured).mockReturnValue(true);vi.stubEnv("CRON_SECRET","x".repeat(40));vi.stubEnv("APP_BASE_URL","https://app.test");vi.stubEnv("VERCEL_URL","");
   vi.mocked(generateReply).mockReset().mockResolvedValue("Test reply");
@@ -623,5 +625,19 @@ describe("per-conversation AI consent", () => {
       try { await expect(db.query("select tenant_set_chat_ai('1','c1','42',true)")).rejects.toThrow(/permission denied/); }
       finally { await db.exec("reset role"); }
     }
+  });
+});
+
+
+describe("incomplete database setup",()=>{
+  it("returns an actionable migration error when the chat permission function is missing",async()=>{
+    await connect(1);missingResource="tenant_set_chat_ai";
+    const response=await request("/inbox/ai",1,"PUT",{connection:"c1",chat:"42",allowed:false});
+    expect(response.status).toBe(503);
+    const result=await response.json();
+    expect(result).toMatchObject({code:"tenant_schema_required",migration:"20261105010000_tenant_chat_ai.sql"});
+    expect(result.error).toContain("database needs an update");
+    expect(JSON.stringify(result)).not.toContain("Private database details");
+    expect(sent).toEqual([]);
   });
 });

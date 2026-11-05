@@ -1,14 +1,20 @@
 begin;
 
-alter table public.tenant_conversations add column ai_allowed boolean not null default false;
-alter table public.tenant_accounts add column manual_inbox boolean not null default false;
+alter table public.tenant_conversations add column if not exists ai_allowed boolean not null default false;
+alter table public.tenant_accounts add column if not exists manual_inbox boolean not null default false;
 -- Records whether this removable text was eligible for AI when it arrived.
-alter table public.tenant_messages add column ai_context boolean not null default false;
+alter table public.tenant_messages add column if not exists ai_context boolean not null default false;
 
--- The old account switch did not record consent for individual chats.
-update public.tenant_jobs set status = 'cancelled' where status in ('pending','processing');
+-- Cancel work without per-chat consent. Re-running this repair preserves eligible jobs.
+update public.tenant_jobs j set status = 'cancelled'
+where j.status in ('pending','processing') and not exists (
+  select 1 from public.tenant_conversations c join public.tenant_messages m
+    on m.owner_id = c.owner_id and m.connection_id = c.connection_id and m.chat_id = c.chat_id
+  where c.owner_id = j.owner_id and c.connection_id = j.connection_id and c.chat_id = j.chat_id
+    and c.ai_allowed and m.id = j.message_id and m.ai_context
+);
 
-create function public.tenant_set_chat_ai(p_owner text, p_connection text, p_chat text, p_allowed boolean)
+create or replace function public.tenant_set_chat_ai(p_owner text, p_connection text, p_chat text, p_allowed boolean)
 returns boolean language plpgsql set search_path = '' as $$
 begin
   update public.tenant_conversations c set ai_allowed = p_allowed
@@ -30,7 +36,7 @@ end $$;
 
 -- Used immediately before the provider call. A rapid pause and re-enable
 -- cannot revive a cancelled job. The final send still claims processing -> sending.
-create function public.tenant_prepare_ai_reply(p_owner text, p_connection text, p_chat text, p_update text, p_limit integer)
+create or replace function public.tenant_prepare_ai_reply(p_owner text, p_connection text, p_chat text, p_update text, p_limit integer)
 returns text language plpgsql set search_path = '' as $$
 begin
   -- Match ingest's usage-then-conversation lock order, including after midnight.

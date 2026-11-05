@@ -2,6 +2,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TenantApp from "./TenantApp";
+import type { TenantConversation } from "./useTenantInbox";
+let chats: TenantConversation[] = [], modeFailure=false;
 
 type Account={owner_id:string;enabled:boolean;consent_at:string|null;tone:string;language:string;manual_inbox?:boolean};
 let account:Account, writes:{path:string;body:Record<string,unknown>}[], failure:string, inboxFailure:boolean, profileFailure:boolean;
@@ -10,6 +12,7 @@ const json=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,
 const toggle=()=>screen.getByRole("checkbox",{name:"Enable automatic replies"}) as HTMLInputElement;
 const agree=()=>fireEvent.click(screen.getByRole("checkbox",{name:/I agree to send/}));
 beforeEach(()=>{
+  chats=[];modeFailure=false;
   account={owner_id:"1",enabled:false,consent_at:null,tone:"friendly",language:"Amharic"};writes=[];failure="";inboxFailure=false;profileFailure=false;hold=undefined;
   Object.defineProperty(window,"Telegram",{configurable:true,value:{WebApp:{initData:"signed-test-session",ready:vi.fn(),expand:vi.fn()}}});
   vi.stubGlobal("fetch",vi.fn(async(input:string,init:RequestInit={})=>{
@@ -21,7 +24,15 @@ beforeEach(()=>{
       const body=JSON.parse(String(init.body));writes.push({path,body});account.manual_inbox=body.enabled;return json({enabled:account.manual_inbox});
     }
     if(path==="/api/user/ai-key")return json({configured:false});
-    if(path==="/api/user/inbox")return inboxFailure?json({error:"Inbox unavailable"},503):json({conversations:[]});
+    if(path==="/api/user/inbox")return inboxFailure?json({error:"Inbox unavailable"},503):json({conversations:chats});
+    if(path==="/api/user/messages")return json({messages:[],hasMore:false});
+    if(path==="/api/user/inbox/ai") {
+      const body=JSON.parse(String(init.body));writes.push({path,body});
+      if(modeFailure)return json({error:"Database setup required"},503);
+      const chat=chats.find(c=>c.chat_id===body.chat&&c.connection_id===body.connection);
+      if(!chat)return json({error:"Unknown chat"},404);
+      chat.ai_allowed=body.allowed;return json(body);
+    }
     if(path==="/api/user/automation"||path==="/api/user/settings"){
       const body=JSON.parse(String(init.body));writes.push({path,body});
       if(hold)await hold;
@@ -116,5 +127,59 @@ describe("dashboard auto-reply status synchronization",()=>{
     fireEvent(window,new Event("focus"));fireEvent.click(toggle());await screen.findByText("Auto-reply on");
     await act(async()=>{release(json({account:old,connections:[],jobs:[],usage:[]}));});
     expect(toggle().checked).toBe(true);expect(screen.getByText("Auto-reply on")).toBeTruthy();
+  });
+});
+
+
+describe("Allow AI activation from the conversation",()=>{
+  async function openInbox(initiallyAllowed=false){
+    chats=["42","99"].map(chat_id=>({connection_id:"c1",chat_id,last_at:"2026-11-05T09:00:00Z",ai_allowed:initiallyAllowed}));
+    render(<TenantApp/>);
+    fireEvent.click(await screen.findByRole("button",{name:"Open chat 42, connection c1"}));
+    await screen.findByRole("textbox",{name:"Manual reply"});
+    fireEvent.click(screen.getByRole("button",{name:initiallyAllowed?"Resume AI":"Allow AI"}));
+  }
+  it("collects consent, enables the account and allows the chosen chat from a fresh manual inbox",async()=>{
+    await openInbox();
+    const confirm=screen.getByRole("button",{name:"Enable and allow AI"}) as HTMLButtonElement;
+    expect(confirm.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("checkbox",{name:/I agree to send approved message text/}));
+    fireEvent.click(confirm);await screen.findByRole("button",{name:"Pause AI"});
+    expect(writes).toEqual([
+      {path:"/api/user/automation",body:{enabled:true,consent:true}},
+      {path:"/api/user/inbox/ai",body:{connection:"c1",chat:"42",allowed:true}}
+    ]);
+    expect(chats[1].ai_allowed).toBe(false);
+    expect(screen.getByText("Auto-reply on")).toBeTruthy();
+  });
+  it("resumes an already allowed chat after the account was paused",async()=>{
+    account.consent_at="2026-11-05";await openInbox(true);
+    expect(screen.queryByRole("checkbox",{name:/I agree to send approved/})).toBeNull();
+    fireEvent.click(screen.getByRole("button",{name:"Enable and allow AI"}));
+    await screen.findByText("Auto-reply on");
+    expect(screen.queryByRole("button",{name:"Resume AI"})).toBeNull();
+    expect(chats[0].ai_allowed).toBe(true);
+  });
+  it("keeps manual mode when account activation is rejected",async()=>{
+    account.consent_at="2026-11-05";failure="Reply permission revoked";
+    await openInbox();fireEvent.click(screen.getByRole("button",{name:"Enable and allow AI"}));
+    await screen.findByText(failure);expect(writes).toHaveLength(1);expect(chats[0].ai_allowed).toBe(false);
+    expect((screen.getByRole("textbox",{name:"Manual reply"}) as HTMLTextAreaElement).disabled).toBe(false);
+  });
+  it("reports partial failure and keeps a reply draft after activation succeeded",async()=>{
+    account.consent_at="2026-11-05";modeFailure=true;
+    await openInbox();fireEvent.change(screen.getByRole("textbox",{name:"Manual reply"}),{target:{value:"Manual draft"}});
+    fireEvent.click(screen.getByRole("button",{name:"Enable and allow AI"}));
+    await screen.findByText(/Account auto-reply is on, but this chat/);
+    expect(chats[0].ai_allowed).toBe(false);expect(screen.queryByRole("button",{name:"Pause AI"})).toBeNull();
+    expect((screen.getByRole("textbox",{name:"Manual reply"}) as HTMLTextAreaElement).value).toBe("Manual draft");
+  });
+  it("keeps the confirmed destination if another chat is opened during activation",async()=>{
+    account.consent_at="2026-11-05";let release!:()=>void;hold=new Promise(resolve=>{release=resolve;});
+    await openInbox();fireEvent.click(screen.getByRole("button",{name:"Enable and allow AI"}));
+    fireEvent.click(screen.getByRole("button",{name:"Open chat 99, connection c1"}));
+    await act(async()=>release());await screen.findByText(/AI allowed for new messages in chat 42/);
+    expect(chats[0].ai_allowed).toBe(true);expect(chats[1].ai_allowed).toBe(false);
+    expect(screen.getByRole("button",{name:"Allow AI"})).toBeTruthy();
   });
 });

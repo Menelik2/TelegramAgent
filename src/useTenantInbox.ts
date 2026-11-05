@@ -386,9 +386,12 @@ export function useTenantInbox(auth: string, active: boolean) {
       }
     }
   };
-  const setChatAi = async (allowed: boolean) => {
-    const chat = scope.selected;
-    if (!chat || scope.expired || scope.clearing || scope.changingMode) return;
+  const setChatAi = async (
+    allowed: boolean,
+    chat = scope.selected,
+  ): Promise<boolean> => {
+    if (!chat || scope.expired || scope.clearing || scope.changingMode)
+      return false;
     const key = conversationKey(chat);
     scope.changingMode = true;
     setChangingMode(key);
@@ -403,7 +406,7 @@ export function useTenantInbox(auth: string, active: boolean) {
         chat: chat.chat_id,
         allowed,
       });
-      if (!scope.alive || scope.expired) return;
+      if (!scope.alive || scope.expired) return false;
       if (
         result.connection !== chat.connection_id ||
         result.chat !== chat.chat_id ||
@@ -425,8 +428,10 @@ export function useTenantInbox(auth: string, active: boolean) {
           ? `AI allowed for new messages in chat ${chat.chat_id} when account auto-reply is on.`
           : `Chat ${chat.chat_id} is manual. A reply already sending may finish.`,
       );
+      return true;
     } catch (error) {
       if (scope.alive && !scope.expired) setNotice(errorText(error));
+      return false;
     } finally {
       scope.changingMode = false;
       if (scope.alive) setChangingMode(null);

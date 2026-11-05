@@ -51,6 +51,15 @@ it("upgrades existing conversations to manual and preserves their history and de
       "cancelled",
       "sending",
     ]);
+    await db.exec(`
+      select tenant_set_chat_ai('1','business','42',true);
+      select tenant_ingest('4','business','42','new authorized message',4);
+    `);
+    // Operators can safely rerun the same repair after a partial setup or a reload.
+    await db.exec(await readFile("supabase/migrations/20261105010000_tenant_chat_ai.sql", "utf8"));
+    expect((await db.query("select ai_allowed from tenant_conversations")).rows).toEqual([{ai_allowed:true}]);
+    expect((await db.query("select status from tenant_jobs where update_id='4'")).rows).toEqual([{status:"pending"}]);
+    expect((await db.query("select * from tenant_messages")).rows).toHaveLength(4);
   } finally {
     await db.close();
   }

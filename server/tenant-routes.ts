@@ -4,7 +4,7 @@ import { Router, type Request, type Response } from "express";
 import { timingSafeEqual } from "node:crypto";
 import { telegramAccount } from "./tenant-auth.js";
 import { multiUserEnabled, saveTenantSettings, TenantActivationError, telegramCall, verifyTenantConnection } from "./tenant-agent.js";
-import { tenantAccount, tenantBudget, tenantDb, eq, type TenantJob, type TenantMessage } from "./tenant-store.js";
+import { tenantAccount, tenantBudget, tenantDb, TenantSchemaError, eq, type TenantJob, type TenantMessage } from "./tenant-store.js";
 import { safeText } from "./policy.js";
 import { tenantCredentialStatus, saveTenantCredential, deleteTenantCredential } from "./tenant-credentials.js";
 
@@ -21,7 +21,9 @@ const owner = (res: Response): string => res.locals.tenantOwner;
 const route = (handler: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response) => {
   void handler(req, res).catch(error => error instanceof TenantActivationError
     ? res.status(error.status).json({ error: error.message, code: error.code })
-    : res.status(503).json({ error: "Operation could not be confirmed. Refresh to check saved settings. If sending failed, check Telegram before retrying. Contact the operator if this continues." }));
+    : error instanceof TenantSchemaError
+      ? res.status(503).json({ error: error.message, code: error.code, migration: error.migration })
+      : res.status(503).json({ error: "Operation could not be confirmed. Refresh to check saved settings. If sending failed, check Telegram before retrying. Contact the operator if this continues." }));
 };
 tenantRouter.get("/me", route(async (_req, res) => {
   const id = owner(res);
@@ -82,8 +84,9 @@ tenantRouter.put("/inbox/ai", route(async (req, res) => {
     return res.status(400).json({ error: "Choose a conversation and its reply mode." });
   }
   const id = owner(res);
-  const rows = await tenantDb<unknown[]>(`tenant_conversations?select=chat_id&owner_id=${eq(id)}&connection_id=${eq(connection)}&chat_id=${eq(chat)}&limit=1`);
+  const rows = await tenantDb<Array<{ ai_allowed?: boolean }>>(`tenant_conversations?owner_id=${eq(id)}&connection_id=${eq(connection)}&chat_id=${eq(chat)}&limit=1`);
   if (!rows.length) return res.status(404).json({ error: "Conversation not found." });
+  if (typeof rows[0].ai_allowed !== "boolean") throw new TenantSchemaError("20261105010000_tenant_chat_ai.sql");
   if (allowed) {
     if (!(await tenantAccount(id)).consent_at) return res.status(409).json({ error: "Enable automatic replies in settings to give AI processing consent first." });
     if (!(await verifyTenantConnection(id, connection))) return res.status(403).json({ error: "Telegram reply permission is unavailable for this connection." });

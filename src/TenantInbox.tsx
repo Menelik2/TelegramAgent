@@ -14,6 +14,7 @@ import {
 import {
   conversationKey,
   type InboxConnection,
+  type TenantConversation,
   type useTenantInbox,
 } from "./useTenantInbox";
 
@@ -21,6 +22,9 @@ type Props = {
   inbox: ReturnType<typeof useTenantInbox>;
   connections: InboxConnection[];
   enabled: boolean;
+  consentGranted: boolean;
+  activating: boolean;
+  onEnableAi(chat: TenantConversation, consent: boolean): Promise<boolean>;
   onSettings(): void;
   statusUnavailable: boolean;
 };
@@ -35,6 +39,9 @@ export default function TenantInbox({
   inbox,
   connections,
   enabled,
+  consentGranted,
+  activating,
+  onEnableAi,
   onSettings,
   statusUnavailable,
 }: Props) {
@@ -54,6 +61,8 @@ export default function TenantInbox({
   const thread = useRef<HTMLDivElement>(null),
     oldHeight = useRef<number | null>(null),
     nearBottom = useRef(true);
+  const [confirmActivation, setConfirmActivation] = useState(false);
+  const [aiConsent, setAiConsent] = useState(false);
   const key = selected ? conversationKey(selected) : "";
   const canReply = (connection: string) =>
     connections.some((c) => c.id === connection && c.enabled && c.can_reply);
@@ -74,6 +83,8 @@ export default function TenantInbox({
     }
   });
   useEffect(() => {
+    setConfirmActivation(false);
+    setAiConsent(false);
     nearBottom.current = true;
     setAtBottom(true);
     oldHeight.current = null;
@@ -101,7 +112,9 @@ export default function TenantInbox({
         <div className="tenant-actions">
           <button
             className="tenant-secondary"
-            disabled={clearing || sending || inbox.changingMode !== null}
+            disabled={
+              clearing || sending || activating || inbox.changingMode !== null
+            }
             onClick={() => void inbox.clearHistory()}
           >
             <Trash2 size={16} />
@@ -326,15 +339,29 @@ export default function TenantInbox({
                         : "AI allowed · account paused"
                       : "Manual replies"}
                 </span>
+                {selected.ai_allowed && !enabled && (
+                  <button
+                    className="tenant-secondary"
+                    disabled={activating || !replyAllowed}
+                    onClick={() => setConfirmActivation(true)}
+                  >
+                    Resume AI
+                  </button>
+                )}
                 {selected.ai_allowed != null && (
                   <button
                     className="tenant-secondary"
                     disabled={
                       clearing ||
                       inbox.changingMode !== null ||
+                      activating ||
                       (!selected.ai_allowed && !replyAllowed)
                     }
-                    onClick={() => void inbox.setChatAi(!selected.ai_allowed)}
+                    onClick={() => {
+                      if (!selected.ai_allowed && (!enabled || !consentGranted))
+                        setConfirmActivation(true);
+                      else void inbox.setChatAi(!selected.ai_allowed);
+                    }}
                   >
                     {inbox.changingMode === key
                       ? "Saving…"
@@ -344,6 +371,53 @@ export default function TenantInbox({
                   </button>
                 )}
               </div>
+              {confirmActivation && (
+                <section
+                  className="tenant-activation"
+                  aria-label="Enable chat AI"
+                >
+                  <h3>Enable AI for chat {selected.chat_id}?</h3>
+                  <p>
+                    This turns on account auto-reply and resumes your other
+                    AI-allowed chats. Replies start with new incoming messages.
+                  </p>
+                  {!consentGranted && (
+                    <label className="tenant-toggle">
+                      <input
+                        type="checkbox"
+                        checked={aiConsent}
+                        disabled={activating}
+                        onChange={(e) => setAiConsent(e.target.checked)}
+                      />{" "}
+                      I agree to send approved message text to the configured AI
+                      provider and store copies for up to 7 days while the
+                      worker runs.
+                    </label>
+                  )}
+                  <div className="tenant-actions">
+                    <button
+                      disabled={activating || (!consentGranted && !aiConsent)}
+                      onClick={() => {
+                        void onEnableAi(
+                          selected,
+                          consentGranted || aiConsent,
+                        ).then((saved) => {
+                          if (saved) setConfirmActivation(false);
+                        });
+                      }}
+                    >
+                      {activating ? "Enabling…" : "Enable and allow AI"}
+                    </button>
+                    <button
+                      className="tenant-secondary"
+                      disabled={activating}
+                      onClick={() => setConfirmActivation(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </section>
+              )}
               {inbox.historyError && (
                 <div className="tenant-inline-error" role="alert">
                   {inbox.historyError}

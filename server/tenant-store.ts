@@ -4,6 +4,18 @@ export type TenantConnection = { id: string; owner_id: string; enabled: boolean;
 export type TenantMessage = { id: number; owner_id: string; connection_id: string; chat_id: string; body: string; direction: "incoming" | "outgoing"; created_at: string };
 export type TenantJob = { update_id: string; owner_id: string; connection_id: string; chat_id: string; message_id: number | null; status: string };
 export const eq = (value: string) => "eq." + encodeURIComponent(value);
+export class TenantSchemaError extends Error {
+  readonly code = "tenant_schema_required";
+  constructor(readonly migration: string) {
+    super("Your inbox database needs an update. Ask the operator to complete the database setup, then try again.");
+  }
+}
+function schemaMigration(path: string, code: string): string {
+  if (path.startsWith("tenant_ai_credentials")) return "20261105000000_tenant_ai_credentials.sql";
+  if (path.startsWith("rpc/tenant_set_chat_ai") || path.startsWith("rpc/tenant_prepare_ai_reply") ||
+      code === "42703" || code === "PGRST204") return "20261105010000_tenant_chat_ai.sql";
+  return "20261104010000_multi_user_agent.sql";
+}
 export async function tenantDb<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   checkOperationDeadline();
   const url = process.env.SUPABASE_URL?.replace(/\/$/, "");
@@ -14,7 +26,15 @@ export async function tenantDb<T>(path: string, method = "GET", body?: unknown):
     headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json", Prefer: "return=representation" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) })
   });
-  if (!response.ok) throw new Error("Multi-user storage unavailable. Check the migration and connection.");
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({})) as { code?: string };
+    // Keep database details and values private. Only recognized schema errors
+    // become actionable setup errors. Auth, network and write failures stay errors.
+    if (["PGRST202", "PGRST204", "PGRST205", "42703", "42P01", "42883"].includes(failure.code || "")) {
+      throw new TenantSchemaError(schemaMigration(path, failure.code!));
+    }
+    throw new Error("Multi-user storage unavailable. Check the migration and connection.");
+  }
   const text = await response.text();
   return (text ? JSON.parse(text) : null) as T;
 }

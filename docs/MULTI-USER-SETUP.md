@@ -22,7 +22,9 @@ Official references:
    [20261105010000_tenant_chat_ai.sql](../supabase/migrations/20261105010000_tenant_chat_ai.sql)
    in the Supabase SQL Editor before rolling out the dashboard and worker.
    Existing and new conversations start in Manual. The migration cancels previously
-   pending and processing jobs. A Telegram send already in progress may complete.
+   pending and processing jobs without per-chat consent. It is safe to rerun this
+   migration after an incomplete setup. Existing eligible jobs and saved chat choices
+   are preserved on a rerun. A Telegram send already in progress may complete.
 2. In BotFather, enable Business/Secretary support and configure your Mini App
    for `https://YOUR_DOMAIN/dashboard`. Set `APP_BASE_URL` to your HTTPS domain.
    Existing `/my-agent` links remain supported. If `APP_BASE_URL` is absent, the
@@ -74,7 +76,9 @@ Official references:
   select **Save incoming messages for manual replies**. New selected messages appear
   in their inbox, where they can type replies using their Business connection.
 - For AI, agree to AI processing and turn on **Enable automatic replies**. Open
-  **Inbox**, select one conversation and choose **Allow AI**. Only new incoming
+  **Inbox**, select one conversation and choose **Allow AI**. If the account is
+  paused, confirm **Enable and allow AI** in the conversation. This resumes other
+  AI-allowed chats too. New users give AI processing consent there before enabling. Only new incoming
   messages in allowed chats can trigger the worker. **Pause AI** returns that
   conversation to Manual and cancels queued or generating replies for it.
   The account switch pauses every chat. Clearing copies preserves each chat's choice.

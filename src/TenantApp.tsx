@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import "./tenant.css";
 import { Bot, Inbox, Settings, Activity, ShieldCheck } from "lucide-react";
 import TenantInbox from "./TenantInbox";
-import { useTenantInbox } from "./useTenantInbox";
+import { useTenantInbox, type TenantConversation } from "./useTenantInbox";
 
 type Profile = {
   account: {
@@ -178,6 +178,32 @@ export default function TenantApp() {
             : "Automatic replies paused. Queued replies cancelled; a send already in progress may finish."),
       );
     });
+  const enableChatAi = async (chat: TenantConversation, aiConsent: boolean) => {
+    if (actionPending.current) return false;
+    let saved = false;
+    await act(async () => {
+      ++profileRequest.current;
+      const result = await api("/automation", "PUT", {
+        enabled: true,
+        consent: aiConsent,
+      });
+      ++profileRequest.current;
+      setProfile((current) =>
+        current ? { ...current, account: result.account } : current,
+      );
+      setStatusError("");
+      if (result.account.enabled !== true)
+        throw new Error(
+          "Automatic replies could not be enabled. Refresh and try again.",
+        );
+      saved = await inbox.setChatAi(true, chat);
+      if (!saved)
+        setNotice(
+          "Account auto-reply is on, but this chat's permission could not be saved. Review the inbox error and try Allow AI again.",
+        );
+    });
+    return saved;
+  };
   return (
     <div
       className={`tenant-app ${page === "inbox" && inbox.selected ? "tenant-thread-open" : ""}`}
@@ -277,6 +303,9 @@ export default function TenantApp() {
                   inbox={inbox}
                   connections={profile.connections}
                   enabled={profile.account.enabled}
+                  consentGranted={Boolean(profile.account.consent_at)}
+                  activating={busy}
+                  onEnableAi={enableChatAi}
                   statusUnavailable={Boolean(statusError)}
                   onSettings={() => setPage("settings")}
                 />

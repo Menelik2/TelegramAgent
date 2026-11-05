@@ -1049,3 +1049,19 @@
 .tenant-chat-mode .tenant-secondary {
   padding: 6px 12px;
 }
+
+.tenant-activation {
+  flex-shrink: 0;
+  padding: 12px 16px;
+  background: #f0f4ff;
+  border-bottom: 1px solid var(--tenant-line);
+  max-height: 48%;
+  overflow-y: auto;
+}
+.tenant-activation p {
+  margin: 8px 0;
+}
+.tenant-activation .tenant-toggle {
+  font-size: 12px;
+  margin: 8px 0;
+}

@@ -47,7 +47,10 @@ function Harness() {
   return (
     <TenantInbox
       inbox={inbox}
-      enabled={false}
+      enabled={true}
+      consentGranted={true}
+      activating={false}
+      onEnableAi={async () => false}
       statusUnavailable={false}
       connections={[
         { id: "c1", enabled: !revoked, can_reply: !revoked },
@@ -221,7 +224,7 @@ describe("user inbox workspace", () => {
     expect(screen.getByRole("button", { name: "Allow AI" })).toBeTruthy();
     openChat();
     await screen.findByRole("button", { name: "Pause AI" });
-    expect(screen.getByText("AI allowed · account paused")).toBeTruthy();
+    expect(screen.getAllByText("AI allowed")[0]).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Pause AI" }));
     await screen.findByRole("button", { name: "Allow AI" });
     expect(composer().disabled).toBe(false);
@@ -430,7 +433,7 @@ describe("user inbox workspace", () => {
       screen.getByRole("button", { name: "Open chat 1099, connection c1" }),
     ).toBeTruthy();
   });
-  it("allows manual replies when automation is paused but disables them for revoked connections", async () => {
+  it("disables manual replies for revoked connections", async () => {
     revoked = true;
     await open();
     expect(composer().disabled).toBe(true);

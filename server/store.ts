@@ -171,9 +171,6 @@ export async function recordMessage(message: AgentMessage): Promise<void> {
   });
   if (!response.ok) {
     const failure = await response.json().catch(() => ({})) as { code?: string };
-    // Telegram retries after downstream failures. An already saved copy must not
-    // trap the update in a permanent 503 loop. Verify the exact destination and
-    // content before accepting a unique conflict; unrelated failures still throw.
     if (response.status === 409 && failure.code === "23505" && message.updateId) {
       const existing = await supabaseRequest(`agent_messages?select=business_connection_id,chat_id,sender_id,direction,message_text,telegram_message_id&update_id=eq.${encodeURIComponent(message.updateId)}&direction=eq.${message.direction}&limit=2`);
       if (existing.ok) {
@@ -236,10 +233,13 @@ export async function clearStoredInboxHistory(): Promise<number> {
 function mapConversationRow(row: Record<string, unknown>): InboxConversation {
   const connectionId = String(row.business_connection_id);
   const chatId = String(row.chat_id);
+  // Private chats: Telegram chat_id === user id. Recover missing sender_id so Allow AI works.
+  const rawSender = String(row.sender_id || "").trim();
+  const senderId = rawSender || (/^-?\d{5,22}$/.test(chatId) ? chatId : "");
   return {
     conversationId: conversationId(connectionId, chatId), chatId,
     businessConnectionId: connectionId,
-    senderId: String(row.sender_id || ""),
+    senderId,
     senderName: String(row.sender_name || row.username || chatId),
     username: String(row.username || ""),
     lastMessage: String(row.message_text || "").slice(0, 280),
@@ -252,7 +252,6 @@ function mapConversationRow(row: Record<string, unknown>): InboxConversation {
 export async function listInbox(): Promise<InboxConversation[]> {
   if (!isPersistentStoreConfigured()) return [];
   const conversations: InboxConversation[] = [];
-  // Page metadata, not message history; busy chats cannot hide older destinations.
   for (let offset = 0; ; offset += 500) {
     const response = await supabaseRequest(`agent_inbox?select=*&order=last_message_at.desc,business_connection_id.asc,chat_id.asc&limit=500&offset=${offset}`);
     if (!response.ok) throw new Error(response.status === 404 ? "Inbox metadata is missing. Apply migration 20261104000000_inbox_conversations.sql in Supabase, then refresh." : `Supabase inbox read failed (${response.status}).`);
@@ -262,7 +261,6 @@ export async function listInbox(): Promise<InboxConversation[]> {
   }
 }
 
-/** Exact destination lookup, independent of dashboard pagination and stored history. */
 export async function getInboxConversation(connectionId: string, chatId: string): Promise<InboxConversation | null> {
   if (!isPersistentStoreConfigured()) return null;
   const response = await supabaseRequest(`agent_inbox?select=*&business_connection_id=eq.${encodeURIComponent(connectionId)}&chat_id=eq.${encodeURIComponent(chatId)}&limit=1`);
@@ -294,7 +292,6 @@ const DEFAULT_AI_SETTINGS: AiRuntimeSettings = {
   fallbackEnabled: false
 };
 
-/** Read shared AI configuration from Supabase; never stores provider API keys. */
 export async function getAiRuntimeSettings(): Promise<AiRuntimeSettings> {
   if (!isPersistentStoreConfigured()) return DEFAULT_AI_SETTINGS;
   try {
@@ -334,7 +331,6 @@ export async function getAiRuntimeSettings(): Promise<AiRuntimeSettings> {
   }
 }
 
-/** Upsert validated non-secret model preferences. */
 export async function saveAiRuntimeSettings(settings: AiRuntimeSettings): Promise<AiRuntimeSettings> {
   if (!isPersistentStoreConfigured()) throw new Error("AI model settings require Supabase persistence. Configure SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.");
   const response = await supabaseRequest("agent_ai_settings?on_conflict=id", {
@@ -358,7 +354,6 @@ export async function saveAiRuntimeSettings(settings: AiRuntimeSettings): Promis
   return { ...settings, updatedAt: new Date().toISOString() };
 }
 
-/** Additional dashboard-managed owners. Environment owners are never modified. */
 export async function listDashboardOwnerIds(): Promise<string[]> {
   const response = await supabaseRequest("agent_owner_ids?select=user_id&order=created_at.asc&limit=500");
   if (!response.ok) throw new Error("Could not load owner IDs. Apply migration 20261103000000_agent_owner_ids.sql.");
@@ -378,4 +373,3 @@ export async function removeDashboardOwnerId(userId: string): Promise<void> {
   });
   if (!response.ok) throw new Error("Could not remove owner ID.");
 }
-

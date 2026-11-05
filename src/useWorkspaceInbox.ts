@@ -62,7 +62,7 @@ export function useWorkspaceInbox(token:string, base:string, active:boolean, onN
         const contacts:InboxContact[]=(inbox.value.conversations||[]).map((item:Record<string,any>,i:number)=>{
           const id=String(item.conversationId||item.chatId),old=s.contacts.find(c=>c.id===id);
           const name=String(item.senderName||item.username||item.chatId);
-          return {id,senderId:item.senderId,name,handle:item.username?"@"+item.username:`id ${item.senderId||item.chatId}`,initials:name.split(/\s+/).slice(0,2).map(v=>v[0]).join("").toUpperCase(),color:["lilac","blue","mint","peach"][i%4],last:item.lastMessage||"",time:item.lastMessageAt?new Date(item.lastMessageAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}):"",allowed:permissionMap?(permissionMap.get(item.senderId)===true):null,messages:old?.messages||[]};
+          return {id,senderId:item.senderId,name,handle:item.username?"@"+item.username:`id ${item.senderId||item.chatId}`,initials:name.split(/\s+/).slice(0,2).map(v=>v[0]).join("").toUpperCase(),color:["lilac","blue","mint","peach"][i%4],last:item.lastMessage||"",time:item.lastMessageAt?new Date(item.lastMessageAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}):"",allowed:permissionMap?(permissionMap.has(String(item.senderId))?permissionMap.get(String(item.senderId))!:false):old?.allowed??null,messages:old?.messages||[]};
         });
         const events:Activity[]=activity.status==="fulfilled"?(activity.value.events||[]):s.events;
         return {...s,contacts,selectedId:contacts.some(c=>c.id===s.selectedId)?s.selectedId:(contacts[0]?.id||""),live:true,loading:false,revision:s.revision+1,multiUser:inbox.value.multiUser===true,error:permissionMap?"":"Contact permissions are unavailable. Reload before changing auto-reply settings.",events,metrics:{messages:(inbox.value.conversations||[]).reduce((n:number,c:{messageCount?:number})=>n+Number(c.messageCount||0),0),replies:events.filter(e=>["reply_sent","manual_reply_sent"].includes(e.kind)).length,review:events.filter(e=>["owner_review_required","blocked","delivery_failed"].includes(e.kind)).length}};
@@ -119,7 +119,7 @@ export function useWorkspaceInbox(token:string, base:string, active:boolean, onN
   const setDraft=(text:string)=>{const id=latest.current.selectedId;if(id)patch(s=>({...s,drafts:{...s.drafts,[id]:text}}));};
   const send=async()=>{
     const snapshot=latest.current,id=snapshot.selectedId,draft=snapshot.drafts[id]||"",text=draft.trim();
-    if(!text||!token||scope.sending||scope.cleaning)return;
+    if(!id||!text||!token||scope.sending||scope.cleaning||snapshot.historyLoading)return;
     scope.sending=true;patch(s=>({...s,sending:true}));
     try {
       const data=await request(`/api/inbox/${encodeURIComponent(id)}/reply`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text})});
@@ -132,7 +132,7 @@ export function useWorkspaceInbox(token:string, base:string, active:boolean, onN
   };
   const toggle=async(id:string)=>{
     const contact=latest.current.contacts.find(c=>c.id===id),sender=contact?.senderId;
-    if(!sender||contact?.allowed===null||scope.permissions.has(sender))return;
+    if(!sender||contact?.allowed===null||scope.permissions.has(sender)||scope.cleaning)return;
     const enabled=!contact?.allowed;scope.permissions.add(sender);scope.list++;patch(s=>({...s,loading:false,permissionPending:[...scope.permissions]}));
     try{
       await request(`/api/agent/contacts/${encodeURIComponent(sender)}`,{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({enabled})});
@@ -145,13 +145,14 @@ export function useWorkspaceInbox(token:string, base:string, active:boolean, onN
   };
   const clear=async()=>{
     if(!token||scope.cleaning||scope.sending)return;
+    if(!window.confirm("Delete stored inbox message copies and cancel queued replies? This cannot be undone. Original Telegram messages are not deleted."))return;
     scope.cleaning=true;scope.list++;scope.history++;scope.older=false;
     for(const c of scope.controllers)c.abort();
     patch(s=>({...s,cleaning:true,loading:false,historyLoading:false,olderLoading:false,historyError:""}));
     try{
       const data=await request("/api/inbox/history",{method:"DELETE",headers:{"x-confirm-inbox-cleanup":"DELETE_STORED_COPIES_ONLY"}});
       if(!valid())return;
-      patch(s=>({...s,offset:0,hasMore:false,contacts:s.contacts.map(c=>({...c,name:c.senderId||c.id,handle:c.senderId||c.id,initials:"?",last:"",messages:[]}))}));
+      patch(s=>({...s,offset:0,hasMore:false,contacts:s.contacts.map(c=>({...c,name:c.senderId||c.id,handle:c.senderId||c.id,initials:"?",last:"",messages:[]})),revision:s.revision+1}));
       scope.cleaning=false;
       await refresh();
       if(valid())notice.current(`Cleared ${data.deletedCount||0} stored copies. Telegram messages are unchanged.`);

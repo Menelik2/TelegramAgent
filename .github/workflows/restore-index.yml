@@ -1,0 +1,21 @@
+name: Restore index.ts
+on:
+  workflow_dispatch:
+jobs:
+  restore:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: root
+          fetch-depth: 0
+      - name: Restore server/index.ts
+        run: |
+          git checkout 3d87b29c495fafc6102ba2abbbc288e6a4f3028a -- server/index.ts
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add server/index.ts
+          git commit -m "fix: restore server/index.ts from 3d87b29 via Actions" || echo "No change"
+          git push origin root

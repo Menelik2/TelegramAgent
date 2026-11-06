@@ -1,1 +1,1 @@
-// See full file - partial update not used
+RESTORE_FROM_LOCAL_ARTIFACT

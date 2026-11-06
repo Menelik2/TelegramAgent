@@ -142,13 +142,17 @@ export function conversationId(connectionId: string, chatId: string): string {
   return encodeURIComponent(connectionId) + "~" + encodeURIComponent(chatId);
 }
 export function parseConversationId(value: string): { connectionId: string; chatId: string } | null {
-  const index = value.indexOf("~");
-  if (index < 1) return /^-?[0-9]{1,22}$/.test(value) ? { connectionId: "direct", chatId: value } : null;
-  try {
-    const connectionId = decodeURIComponent(value.slice(0, index));
-    const chatId = decodeURIComponent(value.slice(index + 1));
-    return connectionId && /^-?[0-9]{1,22}$/.test(chatId) ? { connectionId, chatId } : null;
-  } catch { return null; }
+  // Express/Vercel may already decode path params once; tolerate both raw and encoded forms.
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const index = raw.indexOf("~");
+  if (index < 1) return /^-?[0-9]{1,22}$/.test(raw) ? { connectionId: "direct", chatId: raw } : null;
+  const decode = (part: string) => {
+    try { return decodeURIComponent(part); } catch { return part; }
+  };
+  const connectionId = decode(raw.slice(0, index)).trim();
+  const chatId = decode(raw.slice(index + 1)).trim();
+  return connectionId && /^-?[0-9]{1,22}$/.test(chatId) ? { connectionId, chatId } : null;
 }
 
 export async function recordMessage(message: AgentMessage): Promise<void> {

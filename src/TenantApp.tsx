@@ -169,8 +169,12 @@ export default function TenantApp() {
       setProfile(current => current ? { ...current, connections: result.connections } : current);
       setStatusError("");
       setNotice(result.unavailable
-        ? `Verified ${result.verified} connection(s); ${result.unavailable} could not be checked with Telegram. Retry or reconnect in Telegram Business settings.`
-        : `Telegram permissions refreshed. ${result.verified} connection(s) can reply.`);
+        ? `Verified ${result.verified} connection(s); ${result.unavailable} could not be checked with Telegram. Retry when Telegram is available.`
+        : result.denied
+          ? `Telegram verified ${result.verified} reply-enabled connection(s), but ${result.denied} connection(s) have no reply access. Open Telegram Business settings, select the bot, and enable reply permission.`
+          : result.verified
+            ? `Telegram permissions refreshed. ${result.verified} connection(s) can reply.`
+            : "No Telegram Business connections were found. Connect the bot in Telegram Business settings first.");
     });
   };
   const setAutomation = (enabled: boolean) =>

@@ -136,6 +136,14 @@ beforeEach(async()=>{
 afterEach(async()=>{await Promise.all(vi.mocked(waitUntil).mock.calls.map(call=>call[0]));});
 afterAll(async()=>{if(server)await new Promise<void>(resolve=>server.close(()=>resolve()));if(db)await db.close();vi.unstubAllGlobals();vi.unstubAllEnvs();});
 
+describe("private bot control routing",()=>{
+  it("ignores ordinary private messages without registering an account or sending setup replies",async()=>{
+    await tenantWebhook({update_id:900001,message:{chat:{type:"private",id:77},from:{id:77,is_bot:false},text:"Hello"}});
+    expect((await db.query("select * from tenant_accounts")).rows).toHaveLength(0);
+    expect(sent).toEqual([]);
+  });
+});
+
 describe("multi-user account boundary",()=>{
   it("accepts fresh signed identity; rejects tampering, duplicate fields, expiry and future timestamps",()=>{
     expect(telegramAccount(signed(1),token)).toBe("1");

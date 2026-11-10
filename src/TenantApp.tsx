@@ -83,8 +83,9 @@ export default function TenantApp() {
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d.error || "Request failed.");
+      const d = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(d?.error || "Dashboard API unavailable (HTTP " + r.status + "). Check deployment status.");
+      if (!d || typeof d !== "object") throw new Error("Dashboard API returned an invalid response. Refresh after deployment.");
       return d;
     },
     [auth],

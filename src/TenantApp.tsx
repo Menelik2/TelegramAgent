@@ -197,6 +197,14 @@ export default function TenantApp() {
     if (actionPending.current) return false;
     let saved = false;
     await act(async () => {
+      const check = await api("/connections/refresh", "POST");
+      setProfile(current => current ? { ...current, connections: check.connections } : current);
+      const permitted = (check.connections as Profile["connections"]).some(
+        connection => connection.id === chat.connection_id && connection.enabled && connection.can_reply,
+      );
+      if (!permitted) throw new Error(check.unavailable
+        ? "Telegram could not verify this connection. Retry the permission check."
+        : "Telegram has not granted reply permission for this chat. Enable replies in Telegram Business settings.");
       ++profileRequest.current;
       const result = await api("/automation", "PUT", {
         enabled: true,

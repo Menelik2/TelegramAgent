@@ -37,6 +37,23 @@ tenantRouter.get("/me", route(async (_req, res) => {
   const jobs = [...new Map([...blocked, ...recent].map(job => [job.update_id, job])).values()];
   return res.json({ account, connections, usage, jobs });
 }));
+// Refresh stored connection rights from Telegram on demand. Never grant rights
+// based on the browser: verifyTenantConnection checks Telegram's live owner.
+tenantRouter.post("/connections/refresh", route(async (_req, res) => {
+  const id = owner(res);
+  const connections = await tenantDb<Array<{ id: string }>>(`tenant_connections?select=id&owner_id=${eq(id)}&limit=100`);
+  let verified = 0;
+  let unavailable = 0;
+  for (const connection of connections) {
+    try {
+      if (await verifyTenantConnection(id, connection.id)) verified++;
+    } catch {
+      unavailable++;
+    }
+  }
+  const updated = await tenantDb(`tenant_connections?owner_id=${eq(id)}&order=id.asc&limit=100`);
+  return res.json({ connections: updated, verified, unavailable });
+}));
 // Explicit, independent permission for operator support access to stored inbox copies.
 tenantRouter.put("/admin-inbox-access", route(async (req, res) => {
   if (typeof req.body?.enabled !== "boolean") return res.status(400).json({ error: "Choose whether to allow support inbox access." });

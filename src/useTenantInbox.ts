@@ -128,7 +128,8 @@ export function useTenantInbox(auth: string, active: boolean) {
           },
           ...(body === undefined ? {} : { body: JSON.stringify(body) }),
         });
-        const data = await response.json();
+        // Proxies may return HTML on 502/503; keep the HTTP status visible.
+        const data = await response.json().catch(() => ({})) as { error?: string };
         if (response.status === 401 && scope.alive) {
           scope.expired = true;
           ++scope.listSeq;
@@ -153,7 +154,7 @@ export function useTenantInbox(auth: string, active: boolean) {
         if (!response.ok)
           throw new InboxRequestError(
             response.status,
-            data.error || "Request failed. Try refreshing.",
+            data.error || `Request failed (HTTP ${response.status}). Try refreshing.`,
           );
         return data as T;
       } catch (error) {

@@ -57,6 +57,7 @@ function Harness() {
         { id: "c01", enabled: true, can_reply: true },
       ]}
       onSettings={() => {}}
+      onRefreshConnections={async () => {}}
     />
   );
 }

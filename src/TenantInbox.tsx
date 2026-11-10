@@ -27,6 +27,7 @@ type Props = {
   onEnableAi(chat: TenantConversation, consent: boolean): Promise<boolean>;
   onSettings(): void;
   statusUnavailable: boolean;
+  onRefreshConnections(): Promise<void>;
 };
 const stamp = (date: string) =>
   new Date(date).toLocaleString(undefined, {
@@ -44,6 +45,7 @@ export default function TenantInbox({
   onEnableAi,
   onSettings,
   statusUnavailable,
+  onRefreshConnections,
 }: Props) {
   const {
     conversations,
@@ -529,6 +531,9 @@ export default function TenantInbox({
                   if (replyAllowed && !historyLoading && !sending && !clearing) void inbox.send();
                 }}
               >
+                {!replyAllowed && (
+                  <button type="button" className="tenant-secondary" disabled={activating || clearing} onClick={() => void onRefreshConnections()}>Check Telegram reply permissions</button>
+                )}
                 {!replyAllowed && (
                   <p className="tenant-reply-warning">
                     {statusUnavailable

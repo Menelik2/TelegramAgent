@@ -345,7 +345,7 @@ export default function TenantInbox({
                 {selected.ai_allowed && !enabled && (
                   <button
                     className="tenant-secondary"
-                    disabled={activating || !replyAllowed}
+                    disabled={activating}
                     onClick={() => setConfirmActivation(true)}
                   >
                     Resume AI
@@ -358,10 +358,9 @@ export default function TenantInbox({
                       clearing ||
                       inbox.changingMode !== null ||
                       activating ||
-                      (!selected.ai_allowed && !replyAllowed)
                     }
                     onClick={() => {
-                      if (!selected.ai_allowed && (!enabled || !consentGranted))
+                      if (!selected.ai_allowed && (!enabled || !consentGranted || !replyAllowed))
                         setConfirmActivation(true);
                       else void inbox.setChatAi(!selected.ai_allowed);
                     }}
@@ -382,7 +381,8 @@ export default function TenantInbox({
                   <h3>Enable AI for chat {selected.chat_id}?</h3>
                   <p>
                     This turns on account auto-reply and resumes your other
-                    AI-allowed chats. Replies start with new incoming messages.
+                    AI-allowed chats. Telegram reply access is verified before
+                    permission is granted. Replies start with new incoming messages.
                   </p>
                   {!consentGranted && (
                     <label className="tenant-toggle">

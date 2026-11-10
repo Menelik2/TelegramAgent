@@ -44,15 +44,17 @@ tenantRouter.post("/connections/refresh", route(async (_req, res) => {
   const connections = await tenantDb<Array<{ id: string }>>(`tenant_connections?select=id&owner_id=${eq(id)}&limit=100`);
   let verified = 0;
   let unavailable = 0;
+  let denied = 0;
   for (const connection of connections) {
     try {
       if (await verifyTenantConnection(id, connection.id)) verified++;
+      else denied++;
     } catch {
       unavailable++;
     }
   }
   const updated = await tenantDb(`tenant_connections?owner_id=${eq(id)}&order=id.asc&limit=100`);
-  return res.json({ connections: updated, verified, unavailable });
+  return res.json({ connections: updated, verified, denied, unavailable });
 }));
 // Explicit, independent permission for operator support access to stored inbox copies.
 tenantRouter.put("/admin-inbox-access", route(async (req, res) => {

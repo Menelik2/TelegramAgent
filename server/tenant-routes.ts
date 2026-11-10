@@ -117,6 +117,48 @@ tenantRouter.put("/inbox/ai", route(async (req, res) => {
   return res.json({ connection, chat, allowed });
 }));
 
+// Owner-authorized bulk opt-in for already known chats. Never creates consent,
+// never changes another tenant, and verifies Telegram rights per connection.
+tenantRouter.put("/inbox/ai/bulk", route(async (req, res) => {
+  if (req.body?.confirm !== "ALLOW_AI_FOR_MY_ELIGIBLE_CHATS") {
+    return res.status(400).json({ error: "Explicit owner confirmation is required." });
+  }
+  const id = owner(res);
+  const account = await tenantAccount(id);
+  if (!account.enabled || !account.consent_at) {
+    return res.status(409).json({ error: "Enable account automatic replies and consent first." });
+  }
+  const connections = await tenantDb<Array<{ id: string }>>(
+    `tenant_connections?select=id&owner_id=${eq(id)}&limit=100`
+  );
+  const permitted = new Set<string>();
+  for (const connection of connections) {
+    try {
+      if (await verifyTenantConnection(id, connection.id)) permitted.add(connection.id);
+    } catch {
+      // Unverified connections are never granted AI permission.
+    }
+  }
+  let enabled = 0;
+  let skipped = 0;
+  for (let offset = 0; offset < 10000; offset += 100) {
+    const rows = await tenantDb<Array<{ connection_id: string; chat_id: string; ai_allowed: boolean }>>(
+      `tenant_conversations?select=connection_id,chat_id,ai_allowed&owner_id=${eq(id)}&order=connection_id.asc,chat_id.asc&limit=100&offset=${offset}`
+    );
+    for (const chat of rows) {
+      if (chat.ai_allowed) continue;
+      if (!permitted.has(chat.connection_id)) { skipped++; continue; }
+      const saved = await tenantDb<boolean>("rpc/tenant_set_chat_ai", "POST", {
+        p_owner: id, p_connection: chat.connection_id, p_chat: chat.chat_id, p_allowed: true
+      });
+      if (saved) enabled++;
+      else skipped++;
+    }
+    if (rows.length < 100) break;
+  }
+  return res.json({ ok: true, enabled, skipped, verifiedConnections: permitted.size });
+}));
+
 tenantRouter.get("/inbox", route(async (req, res) => {
   const offset = Number(req.query.offset || 0);
   if (!Number.isSafeInteger(offset) || offset < 0) return res.status(400).json({ error: "Invalid page." });

@@ -442,6 +442,19 @@ describe("user inbox workspace", () => {
     fireEvent.click(send());
     expect(sends).toEqual([]);
   });
+  it("reports a non-JSON upstream error without a JSON parsing failure", async () => {
+    await open();
+    const originalFetch = vi.mocked(fetch);
+    originalFetch.mockImplementationOnce(async () =>
+      new Response("<html>Service Unavailable</html>", {
+        status: 503,
+        headers: { "content-type": "text/html" },
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await screen.findByText(/Request failed \(HTTP 503\)/);
+    expect(screen.queryByText(/Unexpected token/)).toBeNull();
+  });
   it("preserves the draft and reports a permission rejection without claiming delivery", async () => {
     await open();
     sendFailure = 403;

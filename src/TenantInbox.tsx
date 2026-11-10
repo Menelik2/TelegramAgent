@@ -357,7 +357,7 @@ export default function TenantInbox({
                     disabled={
                       clearing ||
                       inbox.changingMode !== null ||
-                      activating ||
+                      activating
                     }
                     onClick={() => {
                       if (!selected.ai_allowed && (!enabled || !consentGranted || !replyAllowed))

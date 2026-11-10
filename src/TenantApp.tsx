@@ -178,6 +178,14 @@ export default function TenantApp() {
             : "No Telegram Business connections were found. Connect the bot in Telegram Business settings first.");
     });
   };
+  const allowAllEligibleChats = async () => {
+    if (!window.confirm("Allow AI for all your existing chats where Telegram grants reply permission? This will not affect other users or chats without reply access.")) return;
+    await act(async () => {
+      const result = await api("/inbox/ai/bulk", "PUT", { confirm: "ALLOW_AI_FOR_MY_ELIGIBLE_CHATS" });
+      setNotice(`AI enabled for ${result.enabled} additional chats. ${result.skipped} chats skipped; ${result.verifiedConnections} connections verified.`);
+      await inbox.refresh();
+    });
+  };
   const setAutomation = (enabled: boolean) =>
     void act(async () => {
       ++profileRequest.current;
@@ -332,6 +340,7 @@ export default function TenantApp() {
                   onEnableAi={enableChatAi}
                   statusUnavailable={Boolean(statusError)}
                   onRefreshConnections={refreshConnections}
+                  onAllowAllEligible={allowAllEligibleChats}
                   onSettings={() => setPage("settings")}
                 />
               </div>

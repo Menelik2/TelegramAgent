@@ -143,6 +143,9 @@ export async function tenantWebhook(update: Record<string, any>): Promise<boolea
   if (update.business_connection?.id) { await syncConnection(String(update.business_connection.id)); return; }
   const direct = update.message;
   if (direct?.chat?.type === "private" && !direct.from?.is_bot && String(direct.from?.id) === String(direct.chat.id)) {
+    const command = typeof direct.text === "string" ? direct.text.trim().split(/\s+/)[0].split("@")[0].toLowerCase() : "";
+    // Ordinary private messages are not control commands; avoid repeated /start replies.
+    if (!["/start", "/dashboard", "/enable", "/pause", "/status", "/clearhistory"].includes(command)) return;
     const claimed = await tenantDb<boolean>("rpc/tenant_control_claim", "POST", { p_update: String(update.update_id), p_owner: String(direct.from.id) });
     if (claimed) await tenantControls(String(direct.from.id), String(direct.text || "/start"));
     return;

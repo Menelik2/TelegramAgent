@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TenantApp from "./TenantApp";
 import type { TenantConversation } from "./useTenantInbox";
-let chats: TenantConversation[] = [], modeFailure=false, replyPermission=false;
+let chats: TenantConversation[] = [], modeFailure=false, replyPermission=false, storedReplyPermission=true;
 
 type Account={owner_id:string;enabled:boolean;consent_at:string|null;tone:string;language:string;manual_inbox?:boolean};
 let account:Account, writes:{path:string;body:Record<string,unknown>}[], failure:string, inboxFailure:boolean, profileFailure:boolean;
@@ -12,14 +12,14 @@ const json=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,
 const toggle=()=>screen.getByRole("checkbox",{name:"Enable automatic replies"}) as HTMLInputElement;
 const agree=()=>fireEvent.click(screen.getByRole("checkbox",{name:/I agree to send/}));
 beforeEach(()=>{
-  chats=[];modeFailure=false;replyPermission=true;
+  chats=[];modeFailure=false;replyPermission=true;storedReplyPermission=true;
   account={owner_id:"1",enabled:false,consent_at:null,tone:"friendly",language:"Amharic"};writes=[];failure="";inboxFailure=false;profileFailure=false;hold=undefined;
   Object.defineProperty(window,"Telegram",{configurable:true,value:{WebApp:{initData:"signed-test-session",ready:vi.fn(),expand:vi.fn()}}});
   vi.stubGlobal("fetch",vi.fn(async(input:string,init:RequestInit={})=>{
     expect((init.headers as Record<string,string>)["x-telegram-init-data"]).toBe("signed-test-session");
     const path=new URL(input,"https://app.test").pathname;
     if(path==="/api/user/me"&&profileFailure)return json({error:"Reopen the dashboard in Telegram to sign in again."},401);
-    if(path==="/api/user/me")return json({account,connections:[{id:"c1",enabled:true,can_reply:true}],jobs:[],usage:[]});
+    if(path==="/api/user/me")return json({account,connections:[{id:"c1",enabled:true,can_reply:storedReplyPermission}],jobs:[],usage:[]});
     if(path==="/api/user/connections/refresh")return json({
       connections:[{id:"c1",enabled:true,can_reply:replyPermission}],
       verified:replyPermission?1:0,denied:replyPermission?0:1,unavailable:0
@@ -162,6 +162,15 @@ describe("Allow AI activation from the conversation",()=>{
     fireEvent.click(screen.getByRole("button",{name:"Enable and allow AI"}));
     await screen.findByText("Auto-reply on");
     expect(screen.queryByRole("button",{name:"Resume AI"})).toBeNull();
+    expect(chats[0].ai_allowed).toBe(true);
+  });
+  it("allows AI activation after a stale read-only connection is reverified",async()=>{
+    account.consent_at="2026-11-05";
+    storedReplyPermission=false;
+    await openInbox();
+    fireEvent.click(screen.getByRole("button",{name:"Enable and allow AI"}));
+    await screen.findByRole("button",{name:"Pause AI"});
+    expect(writes.map(write=>write.path)).toEqual(["/api/user/automation","/api/user/inbox/ai"]);
     expect(chats[0].ai_allowed).toBe(true);
   });
   it("does not enable account-wide AI when selected Telegram reply permission is denied",async()=>{

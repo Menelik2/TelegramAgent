@@ -58,6 +58,7 @@ function Harness() {
       ]}
       onSettings={() => {}}
       onRefreshConnections={async () => {}}
+      onAllowAllEligible={async () => {}}
     />
   );
 }

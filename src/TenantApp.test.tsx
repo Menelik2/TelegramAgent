@@ -20,6 +20,10 @@ beforeEach(()=>{
     const path=new URL(input,"https://app.test").pathname;
     if(path==="/api/user/me"&&profileFailure)return json({error:"Reopen the dashboard in Telegram to sign in again."},401);
     if(path==="/api/user/me")return json({account,connections:[{id:"c1",enabled:true,can_reply:true}],jobs:[],usage:[]});
+    if(path==="/api/user/connections/refresh")return json({
+      connections:[{id:"c1",enabled:true,can_reply:true}],
+      verified:1,denied:0,unavailable:0
+    });
     if(path==="/api/user/manual-inbox"){
       const body=JSON.parse(String(init.body));writes.push({path,body});account.manual_inbox=body.enabled;return json({enabled:account.manual_inbox});
     }

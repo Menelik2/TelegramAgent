@@ -162,6 +162,17 @@ export default function TenantApp() {
       setBusy(false);
     }
   };
+  const refreshConnections = async () => {
+    if (actionPending.current) return;
+    await act(async () => {
+      const result = await api("/connections/refresh", "POST");
+      setProfile(current => current ? { ...current, connections: result.connections } : current);
+      setStatusError("");
+      setNotice(result.unavailable
+        ? `Verified ${result.verified} connection(s); ${result.unavailable} could not be checked with Telegram. Retry or reconnect in Telegram Business settings.`
+        : `Telegram permissions refreshed. ${result.verified} connection(s) can reply.`);
+    });
+  };
   const setAutomation = (enabled: boolean) =>
     void act(async () => {
       ++profileRequest.current;
@@ -307,6 +318,7 @@ export default function TenantApp() {
                   activating={busy}
                   onEnableAi={enableChatAi}
                   statusUnavailable={Boolean(statusError)}
+                  onRefreshConnections={refreshConnections}
                   onSettings={() => setPage("settings")}
                 />
               </div>

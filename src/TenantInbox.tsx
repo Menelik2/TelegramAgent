@@ -69,7 +69,7 @@ export default function TenantInbox({
   const canReply = (connection: string) =>
     connections.some((c) => c.id === connection && c.enabled && c.can_reply);
   const replyAllowed =
-    selected && canReply(selected.connection_id) && !statusUnavailable;
+    selected && canReply(selected.connection_id);
   const visible = conversations.filter((c) => {
     switch (filter) {
       case "manual":
@@ -537,7 +537,7 @@ export default function TenantInbox({
                 {!replyAllowed && (
                   <p className="tenant-reply-warning">
                     {statusUnavailable
-                      ? "Refresh your Telegram session to check access."
+                      ? "Connection status could not be refreshed. Check Telegram permissions; sending still requires live authorization."
                       : "Reply permission is unavailable. Reconnect this bot or allow replies in Telegram’s Business settings."}
                   </p>
                 )}

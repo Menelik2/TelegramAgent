@@ -28,6 +28,7 @@ type Props = {
   onSettings(): void;
   statusUnavailable: boolean;
   onRefreshConnections(): Promise<void>;
+  onAllowAllEligible(): Promise<void>;
 };
 const stamp = (date: string) =>
   new Date(date).toLocaleString(undefined, {
@@ -46,6 +47,7 @@ export default function TenantInbox({
   onSettings,
   statusUnavailable,
   onRefreshConnections,
+  onAllowAllEligible,
 }: Props) {
   const {
     conversations,
@@ -112,6 +114,13 @@ export default function TenantInbox({
           <p>Manage your selected Telegram conversations.</p>
         </div>
         <div className="tenant-actions">
+          <button
+            className="tenant-secondary"
+            disabled={!enabled || !consentGranted || clearing || sending || activating || inbox.changingMode !== null}
+            onClick={() => void onAllowAllEligible()}
+          >
+            Allow AI for eligible chats
+          </button>
           <button
             className="tenant-secondary"
             disabled={

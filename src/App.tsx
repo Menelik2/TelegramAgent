@@ -203,17 +203,20 @@ function TenantUsersPanel({ apiRequest }: { apiRequest: (path: string, init?: Re
   const [supportMessages, setSupportMessages] = useState<Array<{id:number;body:string;direction:string;created_at:string}>>([]);
   const [supportError, setSupportError] = useState("");
   const [supportLoading, setSupportLoading] = useState(false);
+  const supportRequest = useRef(0);
   const openSupport = async (ownerId:string) => {
+    const requestId = ++supportRequest.current;
     setViewOwner(ownerId);setViewChat("");setThreads([]);setSupportMessages([]);setSupportError("");setSupportLoading(true);
-    try { const response=await apiRequest("/api/agent/tenant-inbox/"+encodeURIComponent(ownerId));const data=await readJson(response);if(!response.ok)throw new Error(data.error||"Access denied.");setThreads(data.conversations||[]); }
-    catch(e){setSupportError(e instanceof Error?e.message:"Could not open support inbox.");}
-    finally{setSupportLoading(false);}
+    try { const response=await apiRequest("/api/agent/tenant-inbox/"+encodeURIComponent(ownerId));const data=await readJson(response);if(!response.ok)throw new Error(data.error||"Access denied.");if (requestId === supportRequest.current) setThreads(data.conversations||[]); }
+    catch(e){if (requestId === supportRequest.current) setSupportError(e instanceof Error?e.message:"Could not open support inbox.");}
+    finally{if (requestId === supportRequest.current) setSupportLoading(false);}
   };
   const openThread = async (thread:{connection_id:string;chat_id:string}) => {
+    const requestId = ++supportRequest.current;
     setViewChat(thread.connection_id+"~"+thread.chat_id);setSupportMessages([]);setSupportError("");setSupportLoading(true);
-    try {const response=await apiRequest("/api/agent/tenant-inbox/"+encodeURIComponent(viewOwner)+"/messages?connection="+encodeURIComponent(thread.connection_id)+"&chat="+encodeURIComponent(thread.chat_id));const data=await readJson(response);if(!response.ok)throw new Error(data.error||"Access denied.");setSupportMessages(data.messages||[]);}
-    catch(e){setSupportError(e instanceof Error?e.message:"Could not open messages.");}
-    finally{setSupportLoading(false);}
+    try {const response=await apiRequest("/api/agent/tenant-inbox/"+encodeURIComponent(viewOwner)+"/messages?connection="+encodeURIComponent(thread.connection_id)+"&chat="+encodeURIComponent(thread.chat_id));const data=await readJson(response);if(!response.ok)throw new Error(data.error||"Access denied.");if (requestId === supportRequest.current) setSupportMessages(data.messages||[]);}
+    catch(e){if (requestId === supportRequest.current) setSupportError(e instanceof Error?e.message:"Could not open messages.");}
+    finally{if (requestId === supportRequest.current) setSupportLoading(false);}
   };
   const load = async (nextOffset = 0) => {
     setLoading(true); setError("");
@@ -241,7 +244,7 @@ function TenantUsersPanel({ apiRequest }: { apiRequest: (path: string, init?: Re
         <div className="tenant-user-details"><b>Telegram ID {user.ownerId}</b><span>Registered {user.registeredAt ? new Date(user.registeredAt).toLocaleDateString() : "—"}</span></div>
         <div className="tenant-user-status"><span className={user.automationEnabled ? "permission-chip enabled" : "permission-chip"}>{user.automationEnabled ? "Auto-reply on" : "Paused"}</span><span>{user.readyConnections}/{user.connections} connections ready</span><span>{user.consentGiven ? "Consent recorded" : "Consent pending"}</span><button className="secondary-button compact" disabled={supportLoading} onClick={()=>void openSupport(user.ownerId)}>View inbox (with permission)</button></div>
       </div>)}
-      {viewOwner ? <section className="panel" style={{padding:16,marginTop:14}}><div className="section-head"><h3>Read-only support inbox · {viewOwner}</h3><button className="secondary-button compact" onClick={()=>{setViewOwner("");setThreads([]);setSupportMessages([]);setSupportError("");}}>Close</button></div>
+      {viewOwner ? <section className="panel" style={{padding:16,marginTop:14}}><div className="section-head"><h3>Read-only support inbox · {viewOwner}</h3><button className="secondary-button compact" onClick={()=>{++supportRequest.current;setSupportLoading(false);setViewOwner("");setViewChat("");setThreads([]);setSupportMessages([]);setSupportError("");}}>Close</button></div>
         <p className="helper-text">Available only with the owner's explicit permission. Access is audited. Telegram messages cannot be sent or deleted here.</p>
         {supportError ? <p role="alert" className="helper-text">{supportError}</p> : null}
         {supportLoading ? <p className="helper-text">Loading…</p> : null}

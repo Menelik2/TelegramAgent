@@ -195,98 +195,202 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [automation, setAutomation] = useState(false);
   const [status, setStatus] = useState<Status | null>(null);
-  const [mobileChatOpen, setMobileChatOpen] = useState(false);
-  const [inboxFilter, setInboxFilter] = useState<"all" | "allowed" | "manual">("all");
   const [dashboardToken, setDashboardToken] = useState(() => window.sessionStorage.getItem("dashboardApiToken") || "");
   const [toast, setToast] = useState("");
+  const [aiModel, setAiModel] = useState("gemini-3.5-flash-lite");
+  const [aiSettingsLoading, setAiSettingsLoading] = useState(false);
+  const [ownerIdsText, setOwnerIdsText] = useState("");
+  const [ownerIdsLoading, setOwnerIdsLoading] = useState(false);
+  const [ownerIdsSaving, setOwnerIdsSaving] = useState(false);
+  const [ownerIdsError, setOwnerIdsError] = useState("");
   const flash = (m: string) => { setToast(m); window.setTimeout(() => setToast(""), 3200); };
-  const apiRequest = (path: string, init?: RequestInit) => {
-    const headers = new Headers(init?.headers || {});
-    if (dashboardToken) headers.set("Authorization", "Bearer " + dashboardToken);
-    return fetch(path, { ...init, headers });
+  const apiBase = import.meta.env.VITE_API_BASE_URL || "";
+  const apiRequest = (path: string, init: RequestInit = {}) => {
+    const headers = new Headers(init.headers || {});
+    if (dashboardToken) headers.set("x-dashboard-token", dashboardToken);
+    return fetch(`${apiBase}${path}`, { ...init, headers });
   };
-  const inbox = useWorkspaceInbox(apiRequest, readJson, flash);
+  const inbox = useWorkspaceInbox(dashboardToken, apiBase, page === "Inbox" || page === "Overview", flash);
   const loadStatus = () => apiRequest("/api/status").then(async r => {
     const d = await readJson(r);
     if (!r.ok) throw new Error(d.error || "Status failed");
     setStatus(d as Status);
     setAutomation(Boolean(d.automationEnabled));
   }).catch(e => flash(e instanceof Error ? e.message : "Status failed"));
+  useEffect(() => {
+    if (dashboardToken) window.sessionStorage.setItem("dashboardApiToken", dashboardToken);
+    else window.sessionStorage.removeItem("dashboardApiToken");
+  }, [dashboardToken]);
   useEffect(() => { void loadStatus(); const t = window.setInterval(() => void loadStatus(), 30000); return () => window.clearInterval(t); }, [dashboardToken]);
+  useEffect(() => {
+    if (!dashboardToken) return;
+    setAiSettingsLoading(true);
+    apiRequest("/api/agent/ai-settings").then(async r => {
+      const d = await readJson(r);
+      if (r.ok && d.settings?.model) setAiModel(String(d.settings.model));
+    }).catch(() => {}).finally(() => setAiSettingsLoading(false));
+  }, [dashboardToken]);
+  useEffect(() => {
+    if (!dashboardToken) { setOwnerIdsText(""); return; }
+    setOwnerIdsLoading(true);
+    apiRequest("/api/agent/owner-ids").then(async r => {
+      const d = await readJson(r);
+      if (r.ok) setOwnerIdsText((d.ownerIds || []).join("\n"));
+    }).catch(() => {}).finally(() => setOwnerIdsLoading(false));
+  }, [dashboardToken]);
+  const toggleAutomation = () => {
+    if (!dashboardToken) { flash("Enter token in Settings."); return; }
+    const path = automation ? "/api/agent/pause" : "/api/agent/resume";
+    apiRequest(path, { method: "POST" }).then(async r => {
+      const d = await readJson(r);
+      if (!r.ok) throw new Error(d.error || "Request failed");
+      setAutomation(Boolean(d.automationEnabled));
+      flash(d.automationEnabled ? "Automation enabled." : "Automation paused.");
+      void loadStatus();
+    }).catch(e => flash(e instanceof Error ? e.message : "Failed"));
+  };
+  const emergencyStop = () => {
+    if (!dashboardToken) return;
+    apiRequest("/api/agent/emergency-stop", { method: "POST" }).then(async r => {
+      const d = await readJson(r);
+      if (!r.ok) throw new Error(d.error || "Failed");
+      setAutomation(false);
+      flash("Emergency stop applied.");
+      void loadStatus();
+    }).catch(e => flash(e instanceof Error ? e.message : "Failed"));
+  };
+  const saveOwnerIds = () => {
+    const ids = [...new Set(ownerIdsText.split(/[\s,;]+/).map(v => v.trim()).filter(Boolean))];
+    if (!ids.length || ids.length > 100 || ids.some(id => !/^[1-9][0-9]{0,19}$/.test(id))) {
+      setOwnerIdsError("Enter 1–100 valid numeric Telegram user IDs.");
+      return;
+    }
+    setOwnerIdsSaving(true); setOwnerIdsError("");
+    apiRequest("/api/agent/owner-ids", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ownerIds: ids }) })
+      .then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Save failed"); setOwnerIdsText((d.ownerIds || ids).join("\n")); flash("Owner IDs saved."); })
+      .catch(e => setOwnerIdsError(e instanceof Error ? e.message : "Save failed"))
+      .finally(() => setOwnerIdsSaving(false));
+  };
+  const contacts = inbox.state.contacts || [];
   const filtered = useMemo(() => {
-    let list = inbox.conversations || [];
+    let list = contacts;
     if (query.trim()) {
       const q = query.trim().toLowerCase();
-      list = list.filter((c: any) => String(c.chatId || "").includes(q) || String(c.senderId || "").includes(q) || String(c.lastPreview || "").toLowerCase().includes(q));
+      list = list.filter(c => c.name.toLowerCase().includes(q) || c.handle.toLowerCase().includes(q) || (c.senderId || "").includes(q));
     }
-    if (inboxFilter === "allowed") list = list.filter((c: any) => c.allowAi);
-    if (inboxFilter === "manual") list = list.filter((c: any) => !c.allowAi);
     return list;
-  }, [inbox.conversations, query, inboxFilter]);
+  }, [contacts, query]);
   return (
   <div className="app-shell">
     <aside className="sidebar">
-      <div className="brand"><Bot size={20} /><span>Telegram Agent</span></div>
+      <div className="brand"><div className="brand-mark"><Bot size={20} /></div><div><strong>telegram<span>agent</span></strong><small>PERSONAL AI</small></div></div>
+      <div className="nav-label">Workspace</div>
       <nav>{nav.map(item => (
-        <button key={item.label} className={"nav-item " + (page === item.label ? "active" : "")} onClick={() => setPage(item.label)}><item.icon size={16} />{item.label}</button>
+        <button key={item.label} type="button" className={"nav-item " + (page === item.label ? "active" : "")} onClick={() => setPage(item.label)} aria-current={page === item.label ? "page" : undefined}><item.icon size={16} aria-hidden /><span>{item.label}</span></button>
       ))}</nav>
-      <div className="sidebar-foot">
-        <label className="field-label">Dashboard token</label>
-        <input className="form-control" type="password" value={dashboardToken} onChange={e => { setDashboardToken(e.target.value); window.sessionStorage.setItem("dashboardApiToken", e.target.value); }} placeholder="API bearer token" />
-        <button className="secondary-button compact" style={{ marginTop: 8 }} onClick={() => void loadStatus()}>Refresh status</button>
+      <div className="sidebar-bottom">
+        <div className="token-box">
+          <label className="field-label" htmlFor="sidebar-token">Dashboard token</label>
+          <input id="sidebar-token" className="form-control" type="password" autoComplete="off" value={dashboardToken} onChange={e => setDashboardToken(e.target.value)} placeholder="Paste DASHBOARD_API_TOKEN" />
+          <p className="helper-text">Required for Settings, Automation, Inbox.</p>
+        </div>
       </div>
     </aside>
-    <main className="main-pane">
-      <div className="page-body">
+    <main className="main-area">
+      <header className="topbar"><div className="crumb">Workspace / <b>{page}</b></div><div className="connection-pill"><span className={"dot " + (status?.telegramConfigured ? "green" : "amber")}></span>{status?.telegramConfigured ? "Telegram connected" : "Telegram not connected"}</div></header>
+      <div className="content">
         {page === "Overview" ? <div>
-          <div className="page-heading"><div><div className="eyebrow">CONTROL</div><h1>Overview</h1><p>Live agent health and automation.</p></div></div>
-          <div className="stat-grid">
-            <div className="stat-card"><b>Automation</b><span>{automation ? "On" : "Off"}</span></div>
-            <div className="stat-card"><b>Telegram</b><span>{status?.telegramConfigured ? "Configured" : "Missing"}</span></div>
-            <div className="stat-card"><b>AI</b><span>{status?.aiConfigured ? (status.aiProvider || "Ready") : "Not set"}</span></div>
-            <div className="stat-card"><b>Storage</b><span>{status?.storageConfigured ? "Persistent" : "Ephemeral"}</span></div>
+          <div className="page-heading"><div><div className="eyebrow">Control</div><h1>Overview</h1><p>Live agent health and automation.</p></div></div>
+          {!dashboardToken ? <div className="notice-card"><ShieldCheck size={18} /><div><b>Dashboard token required</b><p>Paste DASHBOARD_API_TOKEN in the sidebar or Settings to load live data.</p></div></div> : null}
+          <div className="stats-grid">
+            <div className="stat-card"><div className="stat-label">Automation</div><div className="stat-value">{automation ? "On" : "Off"}</div></div>
+            <div className="stat-card"><div className="stat-label">Telegram</div><div className="stat-value" style={{fontSize:18}}>{status?.telegramConfigured ? "OK" : "Missing"}</div></div>
+            <div className="stat-card"><div className="stat-label">AI</div><div className="stat-value" style={{fontSize:16}}>{status?.aiConfigured ? (status.aiProvider || "Ready") : "Not set"}</div></div>
+            <div className="stat-card"><div className="stat-label">Storage</div><div className="stat-value" style={{fontSize:16}}>{status?.storageConfigured ? "Persistent" : "Ephemeral"}</div></div>
           </div>
-          <div className="panel" style={{ marginTop: 16, padding: 18 }}>
-            <div className="toggle-row"><div><b>Automation</b><p className="helper-text">Pause or resume automatic replies.</p></div>
-              <button className={"secondary-button compact " + (automation ? "running" : "")} onClick={() => apiRequest("/api/agent/automation", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: !automation }) }).then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Failed"); setAutomation(Boolean(d.enabled)); flash(d.enabled ? "Automation on" : "Automation paused"); }).catch(e => flash(e instanceof Error ? e.message : "Failed"))}>{automation ? <><Pause size={14} /> Pause</> : <><Play size={14} /> Resume</>}</button></div>
+          <div className="panel" style={{ marginTop: 16 }}>
+            <div className="toggle-row"><div><b>Automation</b><p>Pause or resume automatic replies.</p></div>
+              <button type="button" className={"secondary-button compact " + (automation ? "running" : "")} onClick={toggleAutomation} disabled={!dashboardToken}>{automation ? "Pause" : "Start"}</button></div>
           </div>
-          <WebhookPanel apiRequest={apiRequest} readJson={readJson} flash={flash} />
-        </div> : page === "Inbox" ? <div>
-          <div className="page-heading"><div><div className="eyebrow">MESSAGES</div><h1>Inbox</h1><p>Private chats and manual replies.</p></div>
-            <button className="secondary-button" onClick={() => void inbox.refresh()}>Refresh</button></div>
-          {inbox.error ? <div className="notice-card" role="alert"><ShieldCheck size={18} /><div><b>Inbox error</b><p>{inbox.error}</p></div></div> : null}
+        </div>
+        : page === "Automation" ? <div>
+          <div className="page-heading"><div><div className="eyebrow">Control</div><h1>Automation</h1><p>Start, pause, or emergency-stop automatic replies.</p></div></div>
+          <div className="notice-card"><Zap size={18} /><div><b>Status: {automation ? "ON" : "OFF"}</b><p>{status?.aiProvider || "AI provider from server status"}</p></div></div>
+          <div className="panel settings-panel">
+            <button type="button" className={"primary-button " + (automation ? "running" : "")} onClick={toggleAutomation} disabled={!dashboardToken}>{automation ? "Pause automation" : "Start automation"}</button>
+            <button type="button" className="danger-button" style={{ marginTop: 12 }} disabled={!dashboardToken} onClick={emergencyStop}>Emergency stop</button>
+            <p className="helper-text">Resume requires Telegram + AI credentials and at least one allowed contact in Inbox.</p>
+          </div>
+          <div className="panel settings-panel" style={{ marginTop: 16 }}>
+            <div className="panel-heading"><div><h3>Smart features</h3><p>Configured via Vercel environment variables.</p></div></div>
+            <div className="permission-row"><div className="permission-copy"><b>Human reply delay</b><span>{status?.features?.replyDelayMs ? `${status.features.replyDelayMs.min}–${status.features.replyDelayMs.max} ms` : "~1.5–3s default"}</span></div></div>
+            <div className="permission-row"><div className="permission-copy"><b>Quiet hours</b><span>{status?.features?.quietHours?.enabled ? `${status.features.quietHours.startHour}:00–${status.features.quietHours.endHour}:00` : "Off"}</span></div></div>
+            <div className="permission-row"><div className="permission-copy"><b>Daily limit</b><span>{status?.features?.dailyReplyLimit ? `${status.features.dailyReplyLimit}/day` : "Unlimited"}</span></div></div>
+          </div>
+        </div>
+        : page === "Settings" ? <div>
+          <div className="page-heading"><div><div className="eyebrow">Configuration</div><h1>Settings</h1><p>Token, owners, AI model, and webhook tools.</p></div></div>
+          <div className="panel settings-panel">
+            <label className="field-label" htmlFor="settings-token">Dashboard API token</label>
+            <input id="settings-token" className="form-control" type="password" autoComplete="off" value={dashboardToken} onChange={e => setDashboardToken(e.target.value)} placeholder="DASHBOARD_API_TOKEN" />
+            <button type="button" className="secondary-button" style={{ marginTop: 12 }} onClick={() => void loadStatus()}>Verify & refresh status</button>
+            <p className="helper-text">Must match DASHBOARD_API_TOKEN in Vercel. Sent as x-dashboard-token on every authenticated request.</p>
+          </div>
+          <div className="panel settings-panel" style={{ marginTop: 16 }}>
+            <div className="panel-heading"><div><h3>Telegram Business owner IDs</h3><p>Authorized owner accounts that can connect the bot.</p></div></div>
+            <label className="field-label" htmlFor="owner-ids">One ID per line or comma-separated</label>
+            <textarea id="owner-ids" className="form-control" rows={5} style={{ maxWidth: "100%" }} value={ownerIdsText} onChange={e => setOwnerIdsText(e.target.value)} disabled={!dashboardToken || ownerIdsLoading || ownerIdsSaving} placeholder={"123456789\n987654321"} />
+            {ownerIdsError ? <p className="helper-text" role="alert" style={{ color: "#ffb5c0" }}>{ownerIdsError}</p> : null}
+            <button type="button" className="primary-button" style={{ marginTop: 12 }} disabled={!dashboardToken || ownerIdsSaving} onClick={saveOwnerIds}>{ownerIdsSaving ? "Saving…" : "Save owner IDs"}</button>
+          </div>
+          <div className="panel settings-panel" style={{ marginTop: 16 }}>
+            <div className="panel-heading"><div><h3>AI model</h3><p>{aiSettingsLoading ? "Loading…" : "Gemini model used for replies."}</p></div></div>
+            <input className="form-control" value={aiModel} onChange={e => setAiModel(e.target.value)} disabled={!dashboardToken} />
+            <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+              <button type="button" className="secondary-button compact" disabled={!dashboardToken || aiSettingsLoading} onClick={() => apiRequest("/api/agent/ai-settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: "gemini", model: aiModel, fallbackEnabled: false }) }).then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Save failed"); flash("AI model saved."); }).catch(e => flash(e instanceof Error ? e.message : "Save failed"))}>Save model</button>
+              <button type="button" className="secondary-button compact" disabled={!dashboardToken} onClick={() => apiRequest("/api/agent/ai-settings/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: "gemini", model: aiModel }) }).then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Test failed"); flash("Model test OK."); }).catch(e => flash(e instanceof Error ? e.message : "Test failed"))}>Test model</button>
+            </div>
+          </div>
+          <div style={{ marginTop: 16 }}><WebhookPanel apiRequest={apiRequest} readJson={readJson} flash={flash} /></div>
+        </div>
+        : page === "Users" ? <TenantUsersPanel apiRequest={apiRequest} />
+        : page === "Contacts" ? <div><div className="page-heading"><h1>Contacts</h1></div>{!dashboardToken ? <p className="helper-text">Enter token in Settings.</p> : <ContactsPanel apiRequest={apiRequest} readJson={readJson} flash={flash} />}</div>
+        : page === "Memory" ? <div><div className="page-heading"><h1>Memory</h1></div>{!dashboardToken ? <p className="helper-text">Enter token in Settings.</p> : <MemoryPanel apiRequest={apiRequest} readJson={readJson} flash={flash} />}</div>
+        : page === "AI personality" ? <div><div className="page-heading"><h1>AI personality</h1></div>{!dashboardToken ? <p className="helper-text">Enter token in Settings.</p> : <PersonalityPanel apiRequest={apiRequest} readJson={readJson} flash={flash} />}</div>
+        : page === "Inbox" ? <div>
+          <div className="page-heading"><div><div className="eyebrow">Conversations</div><h1>Inbox</h1></div>
+            <button type="button" className="secondary-button" onClick={() => void inbox.refresh()} disabled={!dashboardToken || inbox.state.loading}>{inbox.state.loading ? "Loading…" : "Refresh"}</button></div>
+          {!dashboardToken ? <div className="notice-card"><ShieldCheck size={18} /><div><b>Token required</b><p>Enter the dashboard token to load conversations.</p></div></div> : null}
+          {inbox.state.error ? <div className="notice-card" role="alert"><ShieldCheck size={18} /><div><b>Inbox error</b><p>{inbox.state.error}</p></div></div> : null}
+          <div className="inbox-toolbar"><div className="inbox-count"><b>{filtered.length}</b> <span>conversations</span></div>
+            <div className="searchbox"><Search size={16} /><input aria-label="Search" placeholder="Search…" value={query} onChange={e => setQuery(e.target.value)} /></div></div>
           <div className="inbox-layout">
-            <div className="inbox-list panel">
-              <input className="form-control" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search chats" />
-              <div className="choice-grid" style={{ marginTop: 10 }}>
-                {["all", "allowed", "manual"].map(f => <button key={f} type="button" className={"choice " + (inboxFilter === f ? "choice-selected" : "")} onClick={() => setInboxFilter(f as any)}>{f}</button>)}
-              </div>
-              {(filtered || []).map((c: any) => (
-                <button key={c.conversationId || c.chatId} className={"inbox-row " + (inbox.selectedId === (c.conversationId || c.chatId) ? "active" : "")} onClick={() => void inbox.selectConversation(c)}>
-                  <b>{c.chatId}</b><span>{c.lastPreview || "—"}</span>
+            <section className="inbox-list">
+              {filtered.map(c => (
+                <button key={c.id} type="button" className={"conversation " + (inbox.state.selectedId === c.id ? "selected" : "")} onClick={() => inbox.select(c.id)}>
+                  <div className="contact-avatar">{c.initials}</div>
+                  <div className="conversation-copy"><div className="conversation-name"><b>{c.name}</b><time>{c.time}</time></div><p>{c.last}</p>
+                    <div className="conversation-tags"><span className={c.allowed ? "tag enabled" : "tag paused"}>{c.allowed ? "Auto-reply" : "Manual"}</span></div></div>
                 </button>
               ))}
-            </div>
-            <div className="inbox-thread panel">
-              {inbox.selectedId ? <>
-                <div className="section-head"><h3>Chat {inbox.selectedChatId || inbox.selectedId}</h3>
-                  <button className="secondary-button compact" onClick={() => void inbox.toggleAllowAi()}>{inbox.selectedAllowAi ? "AI on" : "Allow AI"}</button></div>
-                <div className="message-stream">{(inbox.messages || []).map((m: any) => (
-                  <div key={m.id} className={"message-row " + (m.direction === "outgoing" ? "outgoing" : "")}><div className={"bubble " + (m.direction === "outgoing" ? "bubble-ai" : "bubble-them")}>{m.body || m.text}<time>{m.createdAt || m.created_at}</time></div></div>
+              {!filtered.length && dashboardToken && !inbox.state.loading ? <div className="empty-state"><b>No conversations</b><p>Messages appear here when Telegram delivers them.</p></div> : null}
+            </section>
+            <section className="chat-panel">
+              {inbox.selected ? <>
+                <div className="chat-header"><div className="chat-contact"><b>{inbox.selected.name}</b><span>{inbox.selected.handle}</span></div>
+                  <button type="button" className="secondary-button compact" onClick={() => void inbox.toggle(inbox.selected!.id)}>{inbox.selected.allowed ? <><Pause size={14} /> Pause AI</> : <><Play size={14} /> Allow AI</>}</button></div>
+                <div className="message-stream">{inbox.selected.messages.map(m => (
+                  <div key={m.id} className={"message-row " + (m.from === "ai" ? "outgoing" : "")}><div className={"bubble " + (m.from === "ai" ? "bubble-ai" : "bubble-them")}>{m.text}<time>{m.time}</time></div></div>
                 ))}</div>
                 <div className="reply-box">
-                  <textarea value={inbox.draft || ""} onChange={e => inbox.setDraft(e.target.value)} rows={2} placeholder="Manual reply…" />
-                  <button className="send-button" onClick={() => void inbox.sendReply()} disabled={!inbox.draft?.trim()}><Send size={16} /> Send</button>
+                  <textarea value={inbox.draft} onChange={e => inbox.setDraft(e.target.value)} rows={2} placeholder="Manual reply…" disabled={inbox.state.sending} />
+                  <div className="reply-tools"><span className="helper-text" style={{ margin: 0 }}>Sends as you via Telegram</span>
+                    <button type="button" className="send-button" onClick={() => void inbox.send()} disabled={!inbox.draft.trim() || inbox.state.sending}><Send size={16} /> {inbox.state.sending ? "Sending…" : "Send"}</button></div>
                 </div>
-              </> : <p className="helper-text">Select a conversation.</p>}
-            </div>
+              </> : <div className="empty-state"><b>Select a conversation</b><p>Choose a chat from the list to read and reply.</p></div>}
+            </section>
           </div>
-        </div> : page === "Users" ? <TenantUsersPanel apiRequest={apiRequest} />
-        : page === "AI personality" ? <PersonalityPanel apiRequest={apiRequest} readJson={readJson} flash={flash} />
-        : page === "Contacts" ? <ContactsPanel apiRequest={apiRequest} readJson={readJson} flash={flash} />
-        : page === "Memory" ? <MemoryPanel apiRequest={apiRequest} readJson={readJson} flash={flash} />
-        : page === "Automation" ? <div className="page-heading"><h1>Automation</h1><p>Use Overview to pause or resume.</p></div>
-        : page === "Settings" ? <div className="page-heading"><h1>Settings</h1><p>Token is in the sidebar. Webhook tools are on Overview.</p></div>
+        </div>
         : <div className="page-heading"><h1>{page}</h1></div>}
       </div>
     </main>

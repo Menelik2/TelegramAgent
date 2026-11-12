@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useWorkspaceInbox } from "./useWorkspaceInbox";
 import WebhookPanel from "./WebhookPanel";
 import TenantUsersPanel from "./TenantUsersPanel";
-import { ArrowLeft, Bot, BrainCircuit, ContactRound, Users, Gauge, MessageCircle, Pause, Play, Search, Send, Settings2, ShieldCheck, Sparkles, Zap } from "lucide-react";
+import { Bot, BrainCircuit, ContactRound, Users, Gauge, MessageCircle, Pause, Play, Search, Send, Settings2, ShieldCheck, Sparkles, Zap } from "lucide-react";
 
 async function readJson(response: Response): Promise<Record<string, any>> {
   const raw = await response.text();
@@ -351,7 +351,7 @@ export default function App() {
               <button type="button" className="secondary-button compact" disabled={!dashboardToken} onClick={() => apiRequest("/api/agent/ai-settings/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: "gemini", model: aiModel }) }).then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Test failed"); flash("Model test OK."); }).catch(e => flash(e instanceof Error ? e.message : "Test failed"))}>Test model</button>
             </div>
           </div>
-          <div style={{ marginTop: 16 }}><WebhookPanel apiRequest={apiRequest} readJson={readJson} flash={flash} /></div>
+          <div style={{ marginTop: 16 }}><WebhookPanel enabled={Boolean(dashboardToken)} apiRequest={apiRequest} readJson={readJson} /></div>
         </div>
         : page === "Users" ? <TenantUsersPanel apiRequest={apiRequest} />
         : page === "Contacts" ? <div><div className="page-heading"><h1>Contacts</h1></div>{!dashboardToken ? <p className="helper-text">Enter token in Settings.</p> : <ContactsPanel apiRequest={apiRequest} readJson={readJson} flash={flash} />}</div>

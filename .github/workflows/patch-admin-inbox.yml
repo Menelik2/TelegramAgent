@@ -1,0 +1,50 @@
+name: Patch admin inbox wiring
+on:
+  workflow_dispatch:
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: root
+      - name: Wire registerAdminInboxRoutes into index.ts
+        run: |
+          python3 << 'PY'
+          from pathlib import Path
+          p = Path("server/index.ts")
+          t = p.read_text()
+          if "registerAdminInboxRoutes" not in t:
+              t = t.replace(
+                  'import { multiUserEnabled, tenantWebhook } from "./tenant-agent.js";',
+                  'import { multiUserEnabled, tenantWebhook } from "./tenant-agent.js";\nimport { registerAdminInboxRoutes } from "./admin-inbox.js";'
+              )
+          old = '''// Operator access is read-only, limited to accounts that explicitly opted in.\nconst validTenantOwner = (value: unknown): value is string => typeof value === "string" && /^[1-9][0-9]{0,19}$/.test(value);\nasync function adminInboxConsent(ownerId: string): Promise<boolean> {\n  const rows = await tenantDb<Array<{ admin_inbox_access: boolean }>>(`tenant_accounts?select=admin_inbox_access&owner_id=eq.${encodeURIComponent(ownerId)}&limit=1`);\n  return rows[0]?.admin_inbox_access === true;\n}\napp.get("/api/agent/tenant-inbox/:ownerId", rateLimit({ name: "admin-tenant-inbox", limit: 30, windowMs: 60_000 }), async (req, res) => {\n  const id = req.params.ownerId;\n  if (!multiUserEnabled() || !validTenantOwner(id)) return res.status(400).json({ ok: false, error: "Invalid account." });\n  try {\n    if (!(await adminInboxConsent(id))) return res.status(403).json({ ok: false, error: "The account owner has not granted administrator inbox access." });\n    const conversations = await tenantDb<Array<{ connection_id:string; chat_id:string; last_at:string }>>(`tenant_conversations?select=connection_id,chat_id,last_at&owner_id=eq.${encodeURIComponent(id)}&order=last_at.desc&limit=50`);\n    // Log before disclosing the metadata.\n    await tenantDb("tenant_admin_inbox_audit", "POST", { owner_id: id, action: "conversations" });\n    return res.json({ ok: true, conversations });\n  } catch { return res.status(503).json({ ok: false, error: "Support inbox is unavailable. Check the migration." }); }\n});\napp.get("/api/agent/tenant-inbox/:ownerId/messages", rateLimit({ name: "admin-tenant-messages", limit: 30, windowMs: 60_000 }), async (req, res) => {\n  const id = req.params.ownerId;\n  const connection = String(req.query.connection || ""), chat = String(req.query.chat || "");\n  if (!multiUserEnabled() || !validTenantOwner(id) || !connection || connection.length > 256 || !/^-?[0-9]{1,22}$/.test(chat)) return res.status(400).json({ ok: false, error: "Invalid conversation." });\n  try {\n    if (!(await adminInboxConsent(id))) return res.status(403).json({ ok: false, error: "The account owner has not granted administrator inbox access." });\n    const messages = await tenantDb<Array<{ id:number; body:string; direction:string; created_at:string }>>(`tenant_messages?select=id,body,direction,created_at&owner_id=eq.${encodeURIComponent(id)}&connection_id=eq.${encodeURIComponent(connection)}&chat_id=eq.${encodeURIComponent(chat)}&order=created_at.desc,id.desc&limit=50`);\n    await tenantDb("tenant_admin_inbox_audit", "POST", { owner_id: id, action: "messages" });\n    return res.json({ ok: true, messages: messages.reverse() });\n  } catch { return res.status(503).json({ ok: false, error: "Support messages are unavailable. Check the migration." }); }\n});\n'''
+          new = """// Operator support inbox routes (view + send when owner grants admin_inbox_access).\nregisterAdminInboxRoutes(app, logEvent);\n"""
+          if old in t:
+              t = t.replace(old, new)
+              print("replaced admin block")
+          elif "registerAdminInboxRoutes(app, logEvent)" in t:
+              print("already wired")
+          else:
+              raise SystemExit("admin block not found")
+          t = t.replace(
+              """    const users = await tenantDb<Array<{ owner_id: string; enabled: boolean; consent_at: string | null; created_at: string }>>(\n      `tenant_accounts?select=owner_id,enabled,consent_at,created_at&order=created_at.desc,owner_id.asc&limit=51&offset=${offset}`\n    );""",
+              """    const users = await tenantDb<Array<{ owner_id: string; enabled: boolean; consent_at: string | null; created_at: string; admin_inbox_access?: boolean }>>(\n      `tenant_accounts?select=owner_id,enabled,consent_at,created_at,admin_inbox_access&order=created_at.desc,owner_id.asc&limit=51&offset=${offset}`\n    );"""
+          )
+          t = t.replace(
+              """    return res.json({ ok: true, enabled: true, users: page.map(user => ({\n      ownerId: user.owner_id, automationEnabled: user.enabled, consentGiven: Boolean(user.consent_at),\n      registeredAt: user.created_at, connections: counts.get(user.owner_id)?.total || 0,\n      readyConnections: counts.get(user.owner_id)?.ready || 0\n    })), hasMore: users.length > 50, nextOffset: offset + page.length });""",
+              """    return res.json({ ok: true, enabled: true, users: page.map(user => ({\n      ownerId: user.owner_id, automationEnabled: user.enabled, consentGiven: Boolean(user.consent_at),\n      adminInboxAccess: user.admin_inbox_access === true,\n      registeredAt: user.created_at, connections: counts.get(user.owner_id)?.total || 0,\n      readyConnections: counts.get(user.owner_id)?.ready || 0\n    })), hasMore: users.length > 50, nextOffset: offset + page.length });"""
+          )
+          p.write_text(t)
+          print("done", len(t))
+          PY
+      - name: Commit
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add server/index.ts
+          git diff --cached --quiet || git commit -m "feat: wire admin support inbox view+send into server"
+          git push origin root

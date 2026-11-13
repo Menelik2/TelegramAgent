@@ -148,7 +148,7 @@ export function useWorkspaceInbox(token: string, base: string, active: boolean, 
   useEffect(() => {
     if (!token || !active || !state.selectedId) return;
     void loadHistory(state.selectedId, 0);
-  }, [token, active, state.selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [token, active, state.selectedId]);
 
   const loadOlder = useCallback(async () => {
     if (!state.selectedId || state.olderLoading || !state.hasMore || scope.cleaning) return;

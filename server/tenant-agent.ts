@@ -161,8 +161,15 @@ export async function tenantWebhook(update: Record<string, any>): Promise<boolea
   const message = update.business_message;
   if (!message?.business_connection_id || message.chat?.type !== "private" || message.from?.is_bot || message.sender_business_bot || message.outgoing) return;
   const connection = await syncConnection(String(message.business_connection_id));
-  if (!connection.is_enabled || !connection.rights?.can_reply || String(message.from?.id) === String(connection.user.id)) return;
-  const text = safeText(message.text || message.caption, 4096);
+  // Reading a Business inbox and sending replies have different permissions.
+  // Keep opted-in incoming conversations visible even when reply access is off.
+  if (!connection.is_enabled || String(message.from?.id) === String(connection.user.id)) return;
+  // Save only a media-type marker for attachments; never download or store media.
+  // The database marks these messages as ineligible for automatic AI replies.
+  const mediaType = ["photo", "video", "voice", "video_note", "document", "sticker",
+    "audio", "animation", "location", "contact"].find(type => message[type]);
+  const text = safeText(message.text || message.caption ||
+    (mediaType ? "[Media] " + mediaType : ""), 4096);
   if (!text || !Number.isSafeInteger(message.message_id) || !/^[1-9][0-9]*$/.test(String(message.chat.id))) return;
   await tenantDb("rpc/tenant_ingest", "POST", { p_update: String(update.update_id), p_connection: connection.id, p_chat: String(message.chat.id), p_text: text, p_telegram: message.message_id });
   const pending = await tenantDb<Array<{ update_id: string }>>(`tenant_jobs?select=update_id&update_id=${eq(String(update.update_id))}&status=eq.pending&limit=1`);

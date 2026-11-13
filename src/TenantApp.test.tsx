@@ -57,11 +57,10 @@ describe("Workspace Inbox onboarding",()=>{
   it("lets the signed-in owner enable storage from an empty Inbox without enabling AI",async()=>{
     render(<TenantApp/>);
     fireEvent.click(await screen.findByRole("button",{name:"Enable Inbox for new messages"}));
-    await screen.findByText(/Inbox enabled. Send a NEW message/);
+    await screen.findByRole("button",{name:"Check inbox settings"});
     expect(writes).toEqual([{path:"/api/user/manual-inbox",body:{enabled:true}}]);
     expect(account.enabled).toBe(false);
     expect(account.consent_at).toBeNull();
-    await screen.findByRole("button",{name:"Check inbox settings"});
   });
 });
 

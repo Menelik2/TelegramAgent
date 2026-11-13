@@ -53,6 +53,18 @@ beforeEach(()=>{
 afterEach(()=>{cleanup();Reflect.deleteProperty(window,"Telegram");vi.unstubAllGlobals();vi.restoreAllMocks();});
 async function open(){render(<TenantApp/>);fireEvent.click(screen.getByRole("button",{name:"Auto-reply & settings"}));await screen.findByRole("checkbox",{name:"Enable automatic replies"});}
 
+describe("Workspace Inbox onboarding",()=>{
+  it("lets the signed-in owner enable storage from an empty Inbox without enabling AI",async()=>{
+    render(<TenantApp/>);
+    fireEvent.click(await screen.findByRole("button",{name:"Enable Inbox for new messages"}));
+    await screen.findByText(/Inbox enabled. Send a NEW message/);
+    expect(writes).toEqual([{path:"/api/user/manual-inbox",body:{enabled:true}}]);
+    expect(account.enabled).toBe(false);
+    expect(account.consent_at).toBeNull();
+    await screen.findByRole("button",{name:"Check inbox settings"});
+  });
+});
+
 describe("private user automatic reply controls",()=>{
   it("can start the manual inbox without enabling AI or agreeing to AI processing",async()=>{
     await open();fireEvent.click(screen.getByRole("checkbox",{name:"Save incoming messages for manual replies"}));

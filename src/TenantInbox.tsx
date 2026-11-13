@@ -29,6 +29,8 @@ type Props = {
   statusUnavailable: boolean;
   onRefreshConnections(): Promise<void>;
   onAllowAllEligible(): Promise<void>;
+  manualInboxEnabled: boolean;
+  onEnableManualInbox(): Promise<void>;
 };
 const stamp = (date: string) =>
   new Date(date).toLocaleString(undefined, {
@@ -48,6 +50,8 @@ export default function TenantInbox({
   statusUnavailable,
   onRefreshConnections,
   onAllowAllEligible,
+  manualInboxEnabled,
+  onEnableManualInbox,
 }: Props) {
   const {
     conversations,
@@ -270,17 +274,23 @@ export default function TenantInbox({
                 <h3>
                   {inbox.search || filter !== "all"
                     ? "No matching conversations"
-                    : "Your inbox is ready"}
+                    : manualInboxEnabled ? "Your inbox is ready" : "Enable Inbox to see conversations"}
                 </h3>
                 <p>
                   {inbox.search
                     ? "Try another numeric chat ID."
                     : filter !== "all"
                       ? "No loaded conversations match this filter."
-                      : "Connect your account in Telegram’s Business settings and enable your inbox in settings. New selected messages will appear here."}
+                      : manualInboxEnabled
+                        ? "Send a new message to a chat shared with your Business bot. Past Telegram conversations cannot be imported."
+                        : "Enable message storage to see future chats shared with your Business bot. This does not enable AI or import old messages."}
                 </p>
                 {!inbox.search && filter === "all" && (
-                  <button onClick={onSettings}>Set up inbox</button>
+                  manualInboxEnabled
+                    ? <button onClick={onSettings}>Check inbox settings</button>
+                    : <button disabled={activating} onClick={() => void onEnableManualInbox()}>
+                        {activating ? "Enabling…" : "Enable Inbox for new messages"}
+                      </button>
                 )}
               </div>
             )}

@@ -193,6 +193,7 @@ function ContactsPanel({ apiRequest, readJson, flash }: { apiRequest: (path: str
 export default function App() {
   const [page, setPage] = useState("Overview");
   const [query, setQuery] = useState("");
+  const [showInboxThread, setShowInboxThread] = useState(false);
   const [automation, setAutomation] = useState(false);
   const [status, setStatus] = useState<Status | null>(null);
   const [dashboardToken, setDashboardToken] = useState(() => window.sessionStorage.getItem("dashboardApiToken") || "");
@@ -359,31 +360,35 @@ export default function App() {
         : page === "AI personality" ? <div><div className="page-heading"><h1>AI personality</h1></div>{!dashboardToken ? <p className="helper-text">Enter token in Settings.</p> : <PersonalityPanel apiRequest={apiRequest} readJson={readJson} flash={flash} />}</div>
         : page === "Inbox" ? <div>
           <div className="page-heading"><div><div className="eyebrow">Conversations</div><h1>Inbox</h1></div>
-            <button type="button" className="secondary-button" onClick={() => void inbox.refresh()} disabled={!dashboardToken || inbox.state.loading}>{inbox.state.loading ? "Loading…" : "Refresh"}</button></div>
+            <button type="button" className="secondary-button" onClick={() => void inbox.refresh()} disabled={!dashboardToken || inbox.state.loading}>{inbox.state.loading ? "Loading…" : "Refresh"}</button>
+            <button type="button" className="secondary-button" disabled={!dashboardToken || inbox.state.cleaning}
+              onClick={() => { if (window.prompt("Type CLEAR HISTORY to remove stored copies only (Telegram chats remain):") === "CLEAR HISTORY") void inbox.clear(); }}>
+              Clear database copies
+            </button></div>
           {!dashboardToken ? <div className="notice-card"><ShieldCheck size={18} /><div><b>Token required</b><p>Enter the dashboard token to load conversations.</p></div></div> : null}
           {inbox.state.error ? <div className="notice-card" role="alert"><ShieldCheck size={18} /><div><b>Inbox error</b><p>{inbox.state.error}</p></div></div> : null}
           <div className="inbox-toolbar"><div className="inbox-count"><b>{filtered.length}</b> <span>conversations</span></div>
             <div className="searchbox"><Search size={16} /><input aria-label="Search" placeholder="Search…" value={query} onChange={e => setQuery(e.target.value)} /></div></div>
           <div className="inbox-layout">
-            <section className="inbox-list">
+            <section className={"inbox-list" + (showInboxThread ? " mobile-hidden" : "")}>
               {filtered.map(c => (
-                <button key={c.id} type="button" className={"conversation " + (inbox.state.selectedId === c.id ? "selected" : "")} onClick={() => inbox.select(c.id)}>
+                <button key={c.id} type="button" className={"conversation " + (inbox.state.selectedId === c.id ? "selected" : "")} onClick={() => { inbox.select(c.id); setShowInboxThread(true); }}>
                   <div className="contact-avatar">{c.initials}</div>
                   <div className="conversation-copy"><div className="conversation-name"><b>{c.name}</b><time>{c.time}</time></div><p>{c.last}</p>
-                    <div className="conversation-tags"><span className={c.allowed ? "tag enabled" : "tag paused"}>{c.allowed ? "Auto-reply" : "Manual"}</span></div></div>
+                    <div className="conversation-tags"><span className={c.allowed ? "tag enabled" : "tag paused"}>{c.allowed ? "AI enabled" : "Manual"}</span></div></div>
                 </button>
               ))}
               {!filtered.length && dashboardToken && !inbox.state.loading ? <div className="empty-state"><b>No conversations</b><p>Messages appear here when Telegram delivers them.</p></div> : null}
             </section>
-            <section className="chat-panel">
+            <section className={"chat-panel" + (!showInboxThread ? " mobile-hidden" : "")}>
               {inbox.selected ? <>
-                <div className="chat-header"><div className="chat-contact"><b>{inbox.selected.name}</b><span>{inbox.selected.handle}</span></div>
+                <div className="chat-header"><button type="button" aria-label="Back to conversations" className="secondary-button compact" onClick={() => setShowInboxThread(false)}>Back</button><div className="chat-contact"><b>{inbox.selected.name}</b><span>{inbox.selected.handle}</span></div>
                   <button type="button" className="secondary-button compact" onClick={() => void inbox.toggle(inbox.selected!.id)}>{inbox.selected.allowed ? <><Pause size={14} /> Pause AI</> : <><Play size={14} /> Allow AI</>}</button></div>
                 <div className="message-stream">{inbox.selected.messages.map(m => (
                   <div key={m.id} className={"message-row " + (m.from === "ai" ? "outgoing" : "")}><div className={"bubble " + (m.from === "ai" ? "bubble-ai" : "bubble-them")}>{m.text}<time>{m.time}</time></div></div>
-                ))}</div>
+                ))}{!inbox.selected.messages.length && !inbox.state.historyLoading && !inbox.state.historyError ? <p className="helper-text">No stored messages</p> : null}</div>
                 <div className="reply-box">
-                  <textarea value={inbox.draft} onChange={e => inbox.setDraft(e.target.value)} rows={2} placeholder="Manual reply…" disabled={inbox.state.sending} />
+                  <textarea aria-label="Reply message" value={inbox.draft} onChange={e => inbox.setDraft(e.target.value)} rows={2} placeholder="Manual reply…" disabled={inbox.state.sending} />
                   <div className="reply-tools"><span className="helper-text" style={{ margin: 0 }}>Sends as you via Telegram</span>
                     <button type="button" className="send-button" onClick={() => void inbox.send()} disabled={!inbox.draft.trim() || inbox.state.sending}><Send size={16} /> {inbox.state.sending ? "Sending…" : "Send"}</button></div>
                 </div>

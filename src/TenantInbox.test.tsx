@@ -59,6 +59,8 @@ function Harness() {
       onSettings={() => {}}
       onRefreshConnections={async () => {}}
       onAllowAllEligible={async () => {}}
+      manualInboxEnabled={true}
+      onEnableManualInbox={async () => {}}
     />
   );
 }

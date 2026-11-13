@@ -163,6 +163,17 @@ export default function TenantApp() {
       setBusy(false);
     }
   };
+  const enableManualInbox = async () => {
+    await act(async () => {
+      const result = await api("/manual-inbox", "PUT", { enabled: true });
+      if (result.enabled !== true) throw new Error("Inbox setup could not be confirmed.");
+      setProfile(current => current ? {
+        ...current, account: { ...current.account, manual_inbox: true }
+      } : current);
+      setNotice("Inbox enabled. Send a NEW message to a chat shared with your Telegram Business bot. Telegram does not provide old conversations to import.");
+      await inbox.refresh();
+    });
+  };
   const refreshConnections = async () => {
     if (actionPending.current) return;
     await act(async () => {
@@ -339,6 +350,8 @@ export default function TenantApp() {
                   activating={busy}
                   onEnableAi={enableChatAi}
                   statusUnavailable={Boolean(statusError)}
+                  manualInboxEnabled={profile.account.manual_inbox === true || Boolean(profile.account.consent_at)}
+                  onEnableManualInbox={enableManualInbox}
                   onRefreshConnections={refreshConnections}
                   onAllowAllEligible={allowAllEligibleChats}
                   onSettings={() => setPage("settings")}

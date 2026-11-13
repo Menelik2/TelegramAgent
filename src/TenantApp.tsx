@@ -165,8 +165,11 @@ export default function TenantApp() {
   };
   const enableManualInbox = async () => {
     await act(async () => {
+      // Prevent a previously started profile poll from restoring the old opt-in.
+      ++profileRequest.current;
       const result = await api("/manual-inbox", "PUT", { enabled: true });
       if (result.enabled !== true) throw new Error("Inbox setup could not be confirmed.");
+      ++profileRequest.current;
       setProfile(current => current ? {
         ...current, account: { ...current.account, manual_inbox: true }
       } : current);

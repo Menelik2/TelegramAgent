@@ -574,8 +574,8 @@ export default function TenantInbox({
                     if (
                       e.key === "Enter" &&
                       !e.shiftKey &&
-                      e.currentTarget.matches(":focus") &&
-                      window.matchMedia("(pointer: fine)").matches &&
+                      (typeof window.matchMedia !== "function" ||
+                        window.matchMedia("(pointer: fine)").matches) &&
                       !e.nativeEvent.isComposing &&
                       e.keyCode !== 229
                     ) {

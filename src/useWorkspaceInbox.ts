@@ -136,14 +136,25 @@ export function useWorkspaceInbox(token: string, base: string, active: boolean, 
     }
   }, [token, scope, patch, request, valid]);
 
+  // A list refresh must also refresh the open thread; otherwise the Inbox
+  // appears frozen even while new messages reach the server.
+  const refreshWithHistory = useCallback(async () => {
+    const ok = await refresh();
+    if (ok && valid() && !scope.cleaning) {
+      const id = latest.current.selectedId;
+      if (id) void loadHistory(id, 0);
+    }
+    return ok;
+  }, [refresh, loadHistory, valid, scope]);
+
   useEffect(() => {
     if (!token || !active) return;
-    void refresh();
+    void refreshWithHistory();
     const timer = window.setInterval(() => {
-      if (!scope.sending && !scope.cleaning && !scope.older && latest.current.offset <= 100) void refresh();
+      if (!scope.sending && !scope.cleaning && !scope.older && latest.current.offset <= 100) void refreshWithHistory();
     }, 15000);
     return () => window.clearInterval(timer);
-  }, [token, active, refresh, scope]);
+  }, [token, active, refreshWithHistory, scope]);
 
   useEffect(() => {
     if (!token || !active || !state.selectedId) return;
@@ -239,5 +250,5 @@ export function useWorkspaceInbox(token: string, base: string, active: boolean, 
   }, [token, scope, patch, request, valid, refresh]);
 
   const selected = state.contacts.find(c => c.id === state.selectedId);
-  return { state, selected, draft: state.drafts[state.selectedId] || "", setDraft, select, refresh, loadOlder, send, toggle, clear };
+  return { state, selected, draft: state.drafts[state.selectedId] || "", setDraft, select, refresh: refreshWithHistory, loadOlder, send, toggle, clear };
 }

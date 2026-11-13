@@ -27,7 +27,7 @@ const nativeFetch=globalThis.fetch;
 let db:PGlite, server:Server, base:string;
 let delayGate:Promise<void>|undefined;
 let missingResource="";
-let sent:Record<string,unknown>[]=[], revoked=false, brokenStorage=false, uncertainSend=false;
+let sent:Record<string,unknown>[]=[], revoked=false, readOnly=false, brokenStorage=false, uncertainSend=false;
 let brokenAccountWrites=false, brokenJobWrites=false, brokenConnectionWrites=false, brokenMessageWrites=false;
 const unavailableConnections=new Set<string>();
 const json=(data:unknown,status=200)=>new Response(JSON.stringify(data),{status,headers:{"content-type":"application/json"}});
@@ -105,6 +105,7 @@ beforeAll(async()=>{
   await db.exec(await readFile("supabase/migrations/20261105000000_admin_inbox_consent.sql","utf8"));
   await db.exec(await readFile("supabase/migrations/20261105000000_tenant_ai_credentials.sql","utf8"));
   await db.exec(await readFile("supabase/migrations/20261105010000_tenant_chat_ai.sql","utf8"));
+  await db.exec(await readFile("supabase/migrations/20261113000000_read_only_business_inbox.sql","utf8"));
   vi.stubGlobal("fetch",vi.fn(async(input:string|URL|Request,init:RequestInit={})=>{
     const url=new URL(String(input));
     if(url.hostname==="tenant-storage.test") {
@@ -117,7 +118,7 @@ beforeAll(async()=>{
     if(url.hostname!=="api.telegram.org")throw new Error("Unexpected external request");
     const payload=JSON.parse(String(init.body));
     if(url.pathname.endsWith("getBusinessConnection")&&unavailableConnections.has(payload.business_connection_id))return json({ok:false},400);
-    if(url.pathname.endsWith("getBusinessConnection"))return json({ok:true,result:{id:payload.business_connection_id,user:{id:Number(payload.business_connection_id.slice(1))},is_enabled:!revoked,rights:{can_reply:!revoked}}});
+    if(url.pathname.endsWith("getBusinessConnection"))return json({ok:true,result:{id:payload.business_connection_id,user:{id:Number(payload.business_connection_id.slice(1))},is_enabled:!revoked,rights:{can_reply:!revoked&&!readOnly}}});
     if(url.pathname.endsWith("answerCallbackQuery")) return json({ok:true,result:true});
     if(url.pathname.endsWith("sendMessage")){
       sent.push(payload);if(uncertainSend)throw new Error("Network timeout");return json({ok:true,result:{message_id:101}});
@@ -129,7 +130,7 @@ beforeAll(async()=>{
 beforeEach(async()=>{
   await db.exec("truncate tenant_accounts,tenant_connections,tenant_conversations,tenant_messages,tenant_jobs,tenant_daily_usage,tenant_control_updates cascade");
   missingResource="";delayGate=undefined;vi.mocked(waitUntil).mockClear();vi.stubEnv("TENANT_WORKER_MODE","external");
-  sent=[];revoked=brokenStorage=uncertainSend=brokenMessageWrites=brokenAccountWrites=brokenJobWrites=brokenConnectionWrites=false;
+  sent=[];revoked=readOnly=brokenStorage=uncertainSend=brokenMessageWrites=brokenAccountWrites=brokenJobWrites=brokenConnectionWrites=false;
   unavailableConnections.clear();vi.mocked(isAiConfigured).mockReturnValue(true);vi.stubEnv("CRON_SECRET","x".repeat(40));vi.stubEnv("APP_BASE_URL","https://app.test");vi.stubEnv("VERCEL_URL","");
   vi.mocked(generateReply).mockReset().mockResolvedValue("Test reply");
 });
@@ -176,6 +177,34 @@ describe("multi-user account boundary",()=>{
   it("does not permit connection ownership to be reassigned",async()=>{
     await connect(1);await expect(tenantDb("rpc/tenant_connect","POST",{p_owner:"2",p_connection:"c1",p_enabled:true,p_reply:true})).rejects.toThrow();
     expect((await db.query<{owner_id:string}>("select owner_id from tenant_connections where id='c1'")).rows[0].owner_id).toBe("1");
+  });
+  it("shows consented manual Business messages without reply permission, but never sends",async()=>{
+    await tenantDb("rpc/tenant_connect","POST",{p_owner:"1",p_connection:"c1",p_enabled:true,p_reply:true});
+    expect((await request("/manual-inbox",1,"PUT",{enabled:true})).status).toBe(200);
+    readOnly=true;
+    await tenantWebhook({update_id:91001,business_message:{
+      business_connection_id:"c1",chat:{type:"private",id:42},
+      from:{id:42},message_id:91,text:"Hello from a read-only chat"
+    }});
+    const inbox=await(await request("/inbox",1)).json();
+    expect(inbox.conversations).toHaveLength(1);
+    expect(inbox.conversations[0].last_message).toBe("Hello from a read-only chat");
+    const messages=await(await request("/messages?connection=c1&chat=42",1)).json();
+    expect(messages.messages[0].body).toBe("Hello from a read-only chat");
+    expect((await db.query("select status from tenant_jobs where update_id='91001'")).rows).toEqual([{status:"cancelled"}]);
+    expect((await request("/reply",1,"POST",{connection:"c1",chat:"42",text:"not allowed"})).status).toBe(403);
+    expect(sent).toEqual([]);
+  });
+  it("shows media-only messages as markers without downloading media or invoking AI",async()=>{
+    await connect(1);
+    await tenantWebhook({update_id:91002,business_message:{
+      business_connection_id:"c1",chat:{type:"private",id:42},
+      from:{id:42},message_id:92,photo:[{file_id:"not-downloaded"}]
+    }});
+    const thread=await(await request("/messages?connection=c1&chat=42",1)).json();
+    expect(thread.messages[0].body).toBe("[Media] photo");
+    expect((await db.query("select status from tenant_jobs where update_id='91002'")).rows).toEqual([{status:"cancelled"}]);
+    expect(sent).toEqual([]);
   });
   it("does not store or queue private text before consent; deduplicates after consent",async()=>{
     await connect(1,false);await ingest(1,"1");expect((await db.query("select * from tenant_messages")).rows).toHaveLength(0);

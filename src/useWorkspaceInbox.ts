@@ -63,7 +63,7 @@ export function useWorkspaceInbox(token: string, base: string, active: boolean, 
         ? new Map<string, boolean>((permissions.value.contacts || []).map((p: { senderId: string; enabled: boolean }) => [String(p.senderId), p.enabled]))
         : null;
       patch(s => {
-        const contacts = (inbox.value.conversations || []).map((item: Record<string, any>, i: number) => {
+        const contacts: InboxContact[] = (inbox.value.conversations || []).map((item: Record<string, any>, i: number) => {
           const id = String(item.conversationId || item.chatId);
           const old = s.contacts.find(c => c.id === id);
           const name = String(item.senderName || item.username || item.chatId || "Unknown");

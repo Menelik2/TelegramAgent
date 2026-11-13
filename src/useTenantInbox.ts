@@ -502,7 +502,8 @@ export function useTenantInbox(auth: string, active: boolean) {
     changingMode,
     setChatAi,
     refresh,
-    loading,
+    // Avoid briefly displaying an empty Inbox before the first authenticated fetch.
+    loading: loading || Boolean(auth && scope.listSeq === 0 && !scope.expired),
     historyLoading,
     olderLoading,
     sending,

@@ -566,7 +566,6 @@ export default function TenantInbox({
                   value={draft}
                   maxLength={4096}
                   disabled={!replyAllowed || clearing || sending}
-                  aria-label="Write a manual Telegram reply"
                   placeholder={
                     replyAllowed ? "Write a reply…" : "Reply access required"
                   }

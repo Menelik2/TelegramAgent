@@ -167,7 +167,19 @@ tenantRouter.get("/inbox", route(async (req, res) => {
   type InboxRow = { owner_id: string; connection_id: string; chat_id: string; last_at: string; ai_allowed?: boolean; tenant_messages: Pick<TenantMessage,"body"|"direction"|"created_at">[] };
   // The composite foreign key includes owner + connection + chat. Previews come from
   // removable copies, never from additional permanent personal-data storage.
-  const rows = await tenantDb<InboxRow[]>(`tenant_conversations?select=*,tenant_messages(body,direction,created_at)&owner_id=${eq(owner(res))}${search ? `&chat_id=like.*${search}*` : ""}&order=last_at.desc,connection_id.asc,chat_id.asc&limit=101&offset=${offset}&tenant_messages.order=id.desc&tenant_messages.limit=1`);
+  const listPath = `tenant_conversations?select=*,tenant_messages(body,direction,created_at)&owner_id=${eq(owner(res))}${search ? `&chat_id=like.*${search}*` : ""}&order=last_at.desc,connection_id.asc,chat_id.asc&limit=101&offset=${offset}&tenant_messages.order=id.desc&tenant_messages.limit=1`;
+  let rows: InboxRow[];
+  try {
+    rows = await tenantDb<InboxRow[]>(listPath);
+  } catch (error) {
+    // A missing or stale PostgREST embedded relationship must not hide the
+    // conversation list. Show conversations without previews until it recovers.
+    if (error instanceof TenantSchemaError) throw error;
+    const plain = await tenantDb<Array<Omit<InboxRow, "tenant_messages">>>(
+      `tenant_conversations?select=owner_id,connection_id,chat_id,last_at,ai_allowed&owner_id=${eq(owner(res))}${search ? `&chat_id=like.*${search}*` : ""}&order=last_at.desc,connection_id.asc,chat_id.asc&limit=101&offset=${offset}`
+    );
+    rows = plain.map(row => ({ ...row, tenant_messages: [] }));
+  }
   const conversations = rows.slice(0,100).map(({ owner_id, connection_id, chat_id, last_at, ai_allowed, tenant_messages }) => ({
     owner_id, connection_id, chat_id, last_at, ai_allowed: ai_allowed ?? null, last_message: tenant_messages[0]?.body.slice(0,160) ?? null,
     last_direction: tenant_messages[0]?.direction ?? null, last_message_at: tenant_messages[0]?.created_at ?? null

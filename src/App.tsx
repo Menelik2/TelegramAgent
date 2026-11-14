@@ -364,8 +364,8 @@ export default function App() {
           <div className="page-heading"><div><div className="eyebrow">Conversations</div><h1>Inbox</h1></div>
             <button type="button" className="secondary-button" onClick={() => void inbox.refresh()} disabled={!dashboardToken || inbox.state.loading}>{inbox.state.loading ? "Loading…" : "Refresh"}</button>
             <button type="button" className="secondary-button" disabled={!dashboardToken || inbox.state.cleaning}
-              onClick={() => { if (window.prompt("Type CLEAR HISTORY to remove stored copies only (Telegram chats remain):") === "CLEAR HISTORY") void inbox.clear(); }}>
-              Clear database copies
+              onClick={() => { if (window.prompt("Type CLEAR INBOX to remove stored inbox conversations and message copies. Telegram chats remain untouched:") === "CLEAR INBOX") void inbox.clear(); }}>
+              Clear inbox
             </button></div>
           {!dashboardToken ? <div className="notice-card"><ShieldCheck size={18} /><div><b>Token required</b><p>Enter the dashboard token to load conversations.</p></div></div> : null}
           {inbox.state.error ? <div className="notice-card" role="alert"><ShieldCheck size={18} /><div><b>Inbox error</b><p>{inbox.state.error}</p></div></div> : null}

@@ -42,6 +42,7 @@ beforeAll(async () => {
   await db.exec(await readFile("supabase/migrations/20261028000000_live_inbox.sql", "utf8"));
   await db.exec("insert into agent_messages (business_connection_id,chat_id,direction,message_text) values ('direct','99','incoming','legacy')");
   await db.exec(await readFile("supabase/migrations/20261104000000_inbox_conversations.sql", "utf8"));
+  await db.exec(await readFile("supabase/migrations/20261114000000_clear_inbox_conversations.sql", "utf8"));
   expect((await db.query("select * from agent_conversations")).rows).toHaveLength(1);
   vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request, init: RequestInit = {}) => {
     const url = new URL(String(input));
@@ -103,32 +104,30 @@ afterAll(async () => {
   vi.unstubAllGlobals(); vi.unstubAllEnvs();
 });
 
-describe("history cleanup and retained destinations", () => {
-  it("clears copies and names, keeps scoped destinations, and permits a manual reply", async () => {
+describe("inbox cleanup", () => {
+  it("clears stored messages and conversation rows without contacting Telegram", async () => {
     await store.recordMessage(message());
     await store.recordMessage(message("business-a"));
     expect((await request("/api/inbox/history", "DELETE")).status).toBe(200);
-    const inbox = await store.listInbox();
-    expect(inbox).toHaveLength(2);
-    expect(inbox.every(c => c.messageCount === 0 && c.lastMessage === "" && c.senderName === "42" && c.username === "")).toBe(true);
+    expect(await store.listInbox()).toHaveLength(0);
     expect(await store.listConversationMessages("42", 0, 100, "direct")).toEqual([]);
-    expect((await request("/api/inbox/direct~42/reply", "POST")).status).toBe(200);
-    expect(sent).toEqual([{ chat_id: "42", text: "Manual response" }]);
-    expect(await store.clearStoredInboxHistory()).toBe(1);
+    expect((await request("/api/inbox/direct~42/reply", "POST")).status).toBe(404);
+    expect(sent).toEqual([]);
     expect(await store.clearStoredInboxHistory()).toBe(0);
-    expect(await store.listInbox()).toHaveLength(2);
+    expect(await store.listInbox()).toHaveLength(0);
   });
-  it("preserves more than 500 conversations and finds an exact older destination", async () => {
+  it("clears more than 500 conversations in one operation", async () => {
     await db.exec("insert into agent_messages(business_connection_id,chat_id,direction,message_text) select 'direct', n::text, 'incoming', 'body' from generate_series(1, 1100) n");
     expect(await store.clearStoredInboxHistory()).toBe(1100);
-    expect(await store.listInbox()).toHaveLength(1100);
-    expect(await store.getInboxConversation("direct", "1")).not.toBeNull();
+    expect(await store.listInbox()).toHaveLength(0);
+    expect(await store.getInboxConversation("direct", "1")).toBeNull();
   });
-  it("retains metadata atomically, including later writes, without regressing activity on old updates", async () => {
+  it("allows a new message to recreate a conversation after cleanup", async () => {
     await store.recordMessage({ ...message(), createdAt: "2026-11-04T12:00:00Z" });
     await store.clearStoredInboxHistory();
+    expect(await store.listInbox()).toHaveLength(0);
     await store.recordMessage({ ...message(), createdAt: "2026-11-03T12:00:00Z" });
-    expect((await store.listInbox())[0].lastMessageAt).toContain("2026-11-04");
+    expect((await store.listInbox())[0].lastMessageAt).toContain("2026-11-03");
     await db.exec("begin; insert into agent_messages(business_connection_id,chat_id,direction,message_text) values('direct','88','incoming','rollback'); rollback;");
     expect(await store.getInboxConversation("direct", "88")).toBeNull();
   });
@@ -140,9 +139,8 @@ describe("history cleanup and retained destinations", () => {
     expect((await store.listInbox())[0].messageCount).toBe(1);
     expect(sent).toEqual([]);
   });
-  it.each(["disabled", "reply-revoked", "owner-removed", "wrong-connection"])("blocks Business replies after cleanup: %s", async reason => {
+  it.each(["disabled", "reply-revoked", "owner-removed", "wrong-connection"])("blocks Business replies when authorization is invalid: %s", async reason => {
     await store.recordMessage(message("business-a"));
-    await store.clearStoredInboxHistory();
     if (reason === "disabled") business.is_enabled = false;
     if (reason === "reply-revoked") business.rights.can_reply = false;
     if (reason === "owner-removed") ownerIds = [];
@@ -150,9 +148,8 @@ describe("history cleanup and retained destinations", () => {
     expect((await request("/api/inbox/business-a~42/reply", "POST")).status).toBe(403);
     expect(sent).toEqual([]);
   });
-  it("routes Business replies only through the exact retained connection", async () => {
+  it("routes Business replies only through the exact connection", async () => {
     await store.recordMessage(message("business-a"));
-    await store.clearStoredInboxHistory();
     expect((await request("/api/inbox/business-b~42/reply", "POST")).status).toBe(404);
     expect((await request("/api/inbox/business-a~42/reply", "POST")).status).toBe(200);
     expect(sent[0].business_connection_id).toBe("business-a");
@@ -160,7 +157,6 @@ describe("history cleanup and retained destinations", () => {
   it("rechecks group authorization without sending storage-only group scopes to Telegram", async () => {
     await store.recordMessage(message("group:-100:42", "-100"));
     await store.recordMessage(message("group:-200:42", "-200"));
-    await store.clearStoredInboxHistory();
     expect((await request("/api/inbox/group%3A-200%3A42~-200/reply", "POST")).status).toBe(403);
     expect((await request("/api/inbox/group%3A-100%3A42~-100/reply", "POST")).status).toBe(200);
     expect(sent).toEqual([{ chat_id: "-100", text: "Manual response" }]);

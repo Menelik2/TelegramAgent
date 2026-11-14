@@ -201,6 +201,7 @@ export default function App() {
   const [aiModel, setAiModel] = useState("gemini-3.5-flash-lite");
   const [aiSettingsLoading, setAiSettingsLoading] = useState(false);
   const [ownerIdsText, setOwnerIdsText] = useState("");
+  const [ownerNames, setOwnerNames] = useState<Array<{ id: string; name: string }>>([]);
   const [ownerIdsLoading, setOwnerIdsLoading] = useState(false);
   const [ownerIdsSaving, setOwnerIdsSaving] = useState(false);
   const [ownerIdsError, setOwnerIdsError] = useState("");
@@ -236,7 +237,7 @@ export default function App() {
     setOwnerIdsLoading(true);
     apiRequest("/api/agent/owner-ids").then(async r => {
       const d = await readJson(r);
-      if (r.ok) setOwnerIdsText((d.ownerIds || []).join("\n"));
+      if (r.ok) { setOwnerIdsText((d.ownerIds || []).join("\n")); setOwnerNames(d.owners || []); }
     }).catch(() => {}).finally(() => setOwnerIdsLoading(false));
   }, [dashboardToken]);
   const toggleAutomation = () => {
@@ -263,7 +264,7 @@ export default function App() {
   const saveOwnerIds = () => {
     const ids = [...new Set(ownerIdsText.split(/[\s,;]+/).map(v => v.trim()).filter(Boolean))];
     if (!ids.length || ids.length > 100 || ids.some(id => !/^[1-9][0-9]{0,19}$/.test(id))) {
-      setOwnerIdsError("Enter 1–100 valid numeric Telegram user IDs.");
+      setOwnerIdsError("Enter 1–100 valid Telegram accounts using their numeric IDs.");
       return;
     }
     setOwnerIdsSaving(true); setOwnerIdsError("");
@@ -338,8 +339,9 @@ export default function App() {
             <p className="helper-text">Must match DASHBOARD_API_TOKEN in Vercel. Sent as x-dashboard-token on every authenticated request.</p>
           </div>
           <div className="panel settings-panel" style={{ marginTop: 16 }}>
-            <div className="panel-heading"><div><h3>Telegram Business owner IDs</h3><p>Authorized owner accounts that can connect the bot.</p></div></div>
-            <label className="field-label" htmlFor="owner-ids">One ID per line or comma-separated</label>
+            <div className="panel-heading"><div><h3>Telegram Business owners</h3><p>Authorized accounts shown by their Telegram names.</p></div></div>
+            <div className="permission-list">{ownerNames.map(owner => <div className="permission-row" key={owner.id}><div className="permission-copy"><b>{owner.name}</b><span>{owner.name === "Name unavailable" ? "Telegram could not provide this name" : "Authorized Telegram account"}</span></div></div>)}</div>
+            <label className="field-label" htmlFor="owner-ids">Add or edit owner accounts (Telegram IDs)</label>
             <textarea id="owner-ids" className="form-control" rows={5} style={{ maxWidth: "100%" }} value={ownerIdsText} onChange={e => setOwnerIdsText(e.target.value)} disabled={!dashboardToken || ownerIdsLoading || ownerIdsSaving} placeholder={"123456789\n987654321"} />
             {ownerIdsError ? <p className="helper-text" role="alert" style={{ color: "#ffb5c0" }}>{ownerIdsError}</p> : null}
             <button type="button" className="primary-button" style={{ marginTop: 12 }} disabled={!dashboardToken || ownerIdsSaving} onClick={saveOwnerIds}>{ownerIdsSaving ? "Saving…" : "Save owner IDs"}</button>

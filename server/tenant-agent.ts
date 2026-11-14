@@ -199,7 +199,7 @@ export async function processTenantJob(job: TenantJob): Promise<void> {
       await tenantFinish(job, readiness === "failed" ? "failed" : "cancelled");
       return;
     }
-    const reply = await generateReply({ incomingText: message.body, tone: account.tone, language: account.language, replyLength: "concise", recentContext: history.reverse().map(m => `${m.direction}: ${m.body}`).join("\n").slice(-12000) }, credential ? { provider: "gemini", model: credential.model, fallbackEnabled: false, apiKey: credential.apiKey } : undefined);
+    const reply = await generateReply({ incomingText: message.body, tone: account.tone, language: account.language, replyLength: "natural conversation", recentContext: history.reverse().map(m => `${m.direction === "incoming" ? "Contact" : "Agent"}: ${m.body}`).join("\n").slice(-16000) }, credential ? { provider: "gemini", model: credential.model, fallbackEnabled: false, apiKey: credential.apiKey } : undefined);
     if (reply === "[ESCALATE]") { await tenantFinish(job, "cancelled"); return; }
     // Recheck after AI latency: pause, cleanup or revoked rights must stop queued sends.
     if (!(await tenantAccount(job.owner_id)).enabled || !(await verifyTenantConnection(job.owner_id, job.connection_id))) { await tenantFinish(job, "cancelled"); return; }

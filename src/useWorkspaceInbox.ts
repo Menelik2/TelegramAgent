@@ -110,7 +110,12 @@ export function useWorkspaceInbox(token: string, base: string, active: boolean, 
     }
   }, [token, scope, patch, request, valid]);
 
-  const select = useCallback((id: string) => { scope.history++; scope.older = false; patch(s => ({ ...s, selectedId: id, offset: 0, hasMore: false, olderLoading: false, historyLoading: false, historyError: "" })); }, [patch, scope]);
+  const select = useCallback((id: string) => {
+    // Reselecting the open conversation must not invalidate its in-flight history request.
+    if (latest.current.selectedId === id) return;
+    scope.history++; scope.older = false;
+    patch(s => ({ ...s, selectedId: id, offset: 0, hasMore: false, olderLoading: false, historyLoading: false, historyError: "" }));
+  }, [patch, scope]);
   const setDraft = useCallback((value: string) => { patch(s => ({ ...s, drafts: { ...s.drafts, [s.selectedId]: value } })); }, [patch]);
 
   const loadHistory = useCallback(async (conversationId: string, offset = 0) => {

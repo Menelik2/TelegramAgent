@@ -168,8 +168,9 @@ export async function tenantWebhook(update: Record<string, any>): Promise<boolea
   // The database marks these messages as ineligible for automatic AI replies.
   const mediaType = ["photo", "video", "voice", "video_note", "document", "sticker",
     "audio", "animation", "location", "contact"].find(type => message[type]);
-  const text = safeText(message.text || message.caption ||
-    (mediaType ? "[Media] " + mediaType : ""), 4096);
+  const messageText = safeText(message.text || message.caption || "", 3800);
+  const attachmentNote = messageText && mediaType ? `[Attachment: ${mediaType}. The attachment content is not available to the AI; use only the accompanying text.]` : "";
+  const text = safeText([messageText || (mediaType ? "[Media] " + mediaType : ""), attachmentNote].filter(Boolean).join("\n\n"), 4096);
   if (!text || !Number.isSafeInteger(message.message_id) || !/^[1-9][0-9]*$/.test(String(message.chat.id))) return;
   await tenantDb("rpc/tenant_ingest", "POST", { p_update: String(update.update_id), p_connection: connection.id, p_chat: String(message.chat.id), p_text: text, p_telegram: message.message_id });
   const pending = await tenantDb<Array<{ update_id: string }>>(`tenant_jobs?select=update_id&update_id=${eq(String(update.update_id))}&status=eq.pending&limit=1`);

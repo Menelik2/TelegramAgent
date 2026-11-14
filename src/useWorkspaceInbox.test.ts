@@ -28,7 +28,7 @@ beforeEach(()=>{
     if(url.pathname==="/api/inbox/history"){
       if(cleanupFail)return response({error:"Cleanup failed"},503);
       for(const id in messages)messages[id]=[];
-      conversations=conversations.map(c=>({...c,lastMessage:"",messageCount:0}));
+      conversations=[];
       return response({ok:true,deletedCount:2});
     }
     const match=url.pathname.match(/^\/api\/inbox\/(.+)\/(messages|reply)$/);

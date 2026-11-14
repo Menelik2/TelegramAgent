@@ -386,7 +386,10 @@ export default function App() {
               {inbox.selected ? <>
                 <div className="chat-header"><button type="button" aria-label="Back to conversations" className="secondary-button compact" onClick={() => setShowInboxThread(false)}>Back</button><div className="chat-contact"><b>{inbox.selected.name}</b><span>{inbox.selected.handle}</span></div>
                   <button type="button" className="secondary-button compact" onClick={() => void inbox.toggle(inbox.selected!.id)}>{inbox.selected.allowed ? <><Pause size={14} /> Pause AI</> : <><Play size={14} /> Allow AI</>}</button></div>
-                <div className="message-stream">{inbox.selected.messages.map(m => (
+                <div className="message-stream">
+                  {inbox.state.historyError ? <div className="notice-card" role="alert"><div><b>Could not load messages</b><p>{inbox.state.historyError}</p><button type="button" className="secondary-button compact" onClick={() => void inbox.refresh()}>Retry</button></div></div> : null}
+                  {inbox.state.olderLoading ? <p className="helper-text">Loading older messages…</p> : inbox.state.hasMore ? <button type="button" className="secondary-button compact" onClick={() => void inbox.loadOlder()}>Load older messages</button> : null}
+                  {inbox.selected.messages.map(m => (
                   <div key={m.id} className={"message-row " + (m.from === "ai" ? "outgoing" : "")}><div className={"bubble " + (m.from === "ai" ? "bubble-ai" : "bubble-them")}>{m.text}<time>{m.time}</time></div></div>
                 ))}{!inbox.selected.messages.length && !inbox.state.historyLoading && !inbox.state.historyError ? <p className="helper-text">No stored messages</p> : null}</div>
                 <div className="reply-box">

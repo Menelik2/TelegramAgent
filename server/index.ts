@@ -93,7 +93,22 @@ app.use("/api/agent", requireDashboardAuth);
 app.get("/api/agent/owner-ids", async (_req, res) => {
   try {
     const ids = await getOwnerUserIds();
-    return res.json({ ok: true, ownerIds: ids, count: ids.length, persistent: isProfileStoreConfigured() });
+    const token = process.env.TELEGRAM_BOT_TOKEN || "";
+    const owners = await Promise.all(ids.map(async id => {
+      if (!token) return { id, name: "Name unavailable" };
+      try {
+        const response = await fetch("https://api.telegram.org/bot" + token + "/getChat", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ chat_id: id }), signal: AbortSignal.timeout(10000)
+        });
+        const data = await response.json() as { ok?: boolean; result?: { first_name?: string; last_name?: string; username?: string } };
+        const name = data.ok && data.result
+          ? [data.result.first_name, data.result.last_name].filter(Boolean).join(" ").trim() || (data.result.username ? "@" + data.result.username : "Name unavailable")
+          : "Name unavailable";
+        return { id, name };
+      } catch { return { id, name: "Name unavailable" }; }
+    }));
+    return res.json({ ok: true, ownerIds: ids, owners, count: ids.length, persistent: isProfileStoreConfigured() });
   } catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Owner settings unavailable." }); }
 });
 app.put("/api/agent/owner-ids", async (req, res) => {

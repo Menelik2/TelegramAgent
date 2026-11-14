@@ -174,7 +174,7 @@ function shouldAttemptFallback(error: unknown): boolean {
   if (error instanceof TypeError) return true; // fetch/network failure
   if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) return true;
   const message = error instanceof Error ? error.message : String(error);
-  const status = message.match(/API request failed \\((\\d{3})\\)/)?.[1];
+  const status = message.match(/API request failed \((\d{3})\)/)?.[1];
   if (!status) return false;
   const code = Number(status);
   // Do not hide invalid credentials, unsupported models, or malformed requests

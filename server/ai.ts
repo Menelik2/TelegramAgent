@@ -149,6 +149,26 @@ async function generateWithGemini(input: {
   return sanitizeHumanReply(text);
 }
 
+async function runProvider(
+  provider: "gemini" | "openai",
+  input: {
+    incomingText: string;
+    recentContext?: string;
+    tone?: string;
+    language?: string;
+    replyLength?: string;
+  },
+  model: string,
+  keyOverride?: string
+): Promise<string> {
+  if (provider === "openai") {
+    if (!(keyOverride || process.env.OPENAI_API_KEY?.trim())) throw new Error("The selected OpenAI provider requires OPENAI_API_KEY on the server.");
+    return generateWithOpenAI(input, model, keyOverride);
+  }
+  if (!(keyOverride || process.env.GEMINI_API_KEY?.trim())) throw new Error("GEMINI_API_KEY is not configured.");
+  return generateWithGemini(input, model, keyOverride);
+}
+
 export async function generateReply(input: {
   incomingText: string;
   recentContext?: string;
@@ -158,40 +178,50 @@ export async function generateReply(input: {
 }, overrideSettings?: { provider: "gemini" | "openai"; model: string; fallbackEnabled?: boolean; apiKey?: string }): Promise<string> {
   const settings = overrideSettings || await getAiRuntimeSettings().catch(() => ({
     provider: (process.env.AI_PROVIDER?.trim().toLowerCase() === "openai" ? "openai" : "gemini") as "openai" | "gemini",
-    model: process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL,
+    model: process.env.AI_PROVIDER?.trim().toLowerCase() === "openai"
+      ? (process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL)
+      : (process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL),
     fallbackEnabled: true
   }));
   const provider = settings.provider;
   const model = settings.model;
 
-  const runPrimary = async (): Promise<string> => {
-    if (provider === "openai") {
-      if (!(overrideSettings?.apiKey || process.env.OPENAI_API_KEY?.trim())) throw new Error("The selected OpenAI provider requires OPENAI_API_KEY on the server.");
-      return generateWithOpenAI(input, model, overrideSettings?.apiKey);
-    }
-    if (!(overrideSettings?.apiKey || process.env.GEMINI_API_KEY?.trim())) throw new Error("GEMINI_API_KEY is not configured.");
-    return generateWithGemini(input, model, overrideSettings?.apiKey);
-  };
-
   try {
-    return await runPrimary();
-  } catch (error) {
-    if (provider === "gemini" || settings.fallbackEnabled !== true) throw error;
-    const fallbackModel = provider === "openai"
-      ? (model === "gpt-4o-mini" ? "gpt-4o" : "gpt-4o-mini")
-      : model;
-    if (fallbackModel === model) throw error;
-    try {
-      if (provider === "openai") {
-        if (!process.env.OPENAI_API_KEY?.trim()) throw error;
-        return await generateWithOpenAI(input, fallbackModel, overrideSettings?.apiKey);
+    return await runProvider(provider, input, model, overrideSettings?.apiKey);
+  } catch (primaryError) {
+    if (settings.fallbackEnabled !== true) throw primaryError;
+
+    // A user-supplied provider key belongs only to that provider. Never send it
+    // to another vendor; in that case, retain the existing OpenAI model fallback.
+    const hasPersonalKey = Boolean(overrideSettings?.apiKey);
+    const alternateProvider = provider === "openai" ? "gemini" : "openai";
+    const alternateKey = alternateProvider === "openai"
+      ? process.env.OPENAI_API_KEY?.trim()
+      : process.env.GEMINI_API_KEY?.trim();
+
+    if (!hasPersonalKey && alternateKey) {
+      const alternateModel = alternateProvider === "openai"
+        ? (process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL)
+        : (process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL);
+      try {
+        return await runProvider(alternateProvider, input, alternateModel);
+      } catch (fallbackError) {
+        throw new Error("Selected AI provider and alternate provider both failed. " +
+          (fallbackError instanceof Error ? fallbackError.message : "Fallback provider unavailable."));
       }
-      if (!process.env.GEMINI_API_KEY?.trim()) throw error;
-      return await generateWithGemini(input, fallbackModel, overrideSettings?.apiKey);
-    } catch (fallbackError) {
-      throw new Error("Selected AI model and automatic fallback both failed. " +
-        (fallbackError instanceof Error ? fallbackError.message : "Provider unavailable."));
     }
+
+    // If only an OpenAI key is available, try the other standard OpenAI model.
+    if (provider === "openai") {
+      const fallbackModel = model === "gpt-4o-mini" ? "gpt-4o" : "gpt-4o-mini";
+      try {
+        return await runProvider("openai", input, fallbackModel, overrideSettings?.apiKey);
+      } catch (fallbackError) {
+        throw new Error("Selected AI model and automatic fallback both failed. " +
+          (fallbackError instanceof Error ? fallbackError.message : "Fallback model unavailable."));
+      }
+    }
+
+    throw primaryError;
   }
 }
-

@@ -4,6 +4,8 @@ create or replace function public.clear_agent_message_history() returns bigint
 language plpgsql set search_path = '' as $$
 declare removed bigint;
 begin
+  -- Prevent a concurrent insert trigger from recreating a conversation between the two deletes.
+  lock table public.agent_messages in share row exclusive mode;
   delete from public.agent_messages;
   get diagnostics removed = row_count;
   delete from public.agent_conversations;

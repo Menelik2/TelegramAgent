@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateReply } from "./ai.js";
 import { sanitizeHumanReply } from "./reply-style.js";
 
-const settings = (provider: "openai" | "gemini") => ({ provider, model: "test-model", fallbackEnabled: false });
+const settings = (provider: "openai" | "gemini", fallbackEnabled = false) => ({ provider, model: "test-model", fallbackEnabled });
 
 describe("natural Telegram replies", () => {
   const fetchMock = vi.fn();
@@ -43,6 +43,37 @@ describe("natural Telegram replies", () => {
       ? { choices: [{ message: { content: "The second answer is" }, finish_reason: "length" }] }
       : { candidates: [{ content: { parts: [{ text: "The second answer is" }] }, finishReason: "MAX_TOKENS" }] }));
     await expect(generateReply({ incomingText: "Explain both answers" }, settings(provider))).rejects.toThrow(/cut off/);
+  });
+
+
+  it("falls back from OpenAI to Gemini when the alternate provider is configured", async () => {
+    fetchMock
+      .mockResolvedValueOnce(Response.json({ error: { message: "temporary OpenAI failure" } }, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ candidates: [{ content: { parts: [{ text: "Gemini fallback reply" }] }, finishReason: "STOP" }] }));
+    const result = await generateReply({ incomingText: "Hello" }, settings("openai", true));
+    expect(result).toBe("Gemini fallback reply");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain("generativelanguage.googleapis.com");
+  });
+
+  it("falls back from Gemini to OpenAI when the alternate provider is configured", async () => {
+    fetchMock
+      .mockResolvedValueOnce(Response.json({ error: { message: "temporary Gemini failure" } }, { status: 503 }))
+      .mockResolvedValueOnce(Response.json({ choices: [{ message: { content: "OpenAI fallback reply" }, finish_reason: "stop" }] }));
+    const result = await generateReply({ incomingText: "Hello" }, settings("gemini", true));
+    expect(result).toBe("OpenAI fallback reply");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain("api.openai.com");
+  });
+
+  it("does not send a personal provider key to the alternate vendor", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ error: { message: "provider unavailable" } }, { status: 503 }));
+    await expect(generateReply(
+      { incomingText: "Hello" },
+      { ...settings("openai", true), apiKey: "personal-openai-key" }
+    )).rejects.toThrow(/personal-openai-key|fallback/);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toContain("api.openai.com");
   });
 
   it("preserves owner review even when a provider wraps the marker", async () => {

@@ -110,7 +110,7 @@ export function useWorkspaceInbox(token: string, base: string, active: boolean, 
     }
   }, [token, scope, patch, request, valid]);
 
-  const select = useCallback((id: string) => { patch(s => ({ ...s, selectedId: id })); }, [patch]);
+  const select = useCallback((id: string) => { scope.history++; scope.older = false; patch(s => ({ ...s, selectedId: id, offset: 0, hasMore: false, olderLoading: false, historyLoading: false, historyError: "" })); }, [patch, scope]);
   const setDraft = useCallback((value: string) => { patch(s => ({ ...s, drafts: { ...s.drafts, [s.selectedId]: value } })); }, [patch]);
 
   const loadHistory = useCallback(async (conversationId: string, offset = 0) => {

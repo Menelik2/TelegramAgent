@@ -37,6 +37,9 @@ describe("natural Telegram replies", () => {
     expect(body.messages[0].content).toContain("Understand short messages, typos, abbreviations, emojis");
     expect(body.messages[0].content).toContain("Answer the actual request, not merely acknowledge it");
     expect(body.messages[0].content).toContain("give the answer first");
+    expect(body.messages[0].content).toContain("Do not simply copy, paraphrase line by line, or echo the sender's latest private message");
+    expect(body.messages[0].content).toContain("Never use the same acknowledgement or opening repeatedly");
+    expect(body.messages[0].content).toContain("Use contact-specific notes only for the matching contact");
     expect(body.messages[0].content).toContain("Do not volunteer or repeatedly announce that you are an AI");
     expect(body.messages[0].content).toContain("If asked directly whether you are AI, a bot, or automated, answer truthfully");
     expect(body.messages[0].content).not.toContain("latest incoming message is English");

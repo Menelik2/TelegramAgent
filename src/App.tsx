@@ -198,7 +198,10 @@ export default function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [dashboardToken, setDashboardToken] = useState(() => window.sessionStorage.getItem("dashboardApiToken") || "");
   const [toast, setToast] = useState("");
+  const [aiProvider, setAiProvider] = useState<"gemini" | "openai">("gemini");
   const [aiModel, setAiModel] = useState("gemini-3.5-flash-lite");
+  const [aiFallbackEnabled, setAiFallbackEnabled] = useState(false);
+  const [aiProviders, setAiProviders] = useState<Array<{ id: string; label: string; configured: boolean; models: string[] }>>([]);
   const [aiSettingsLoading, setAiSettingsLoading] = useState(false);
   const [ownerIdsText, setOwnerIdsText] = useState("");
   const [ownerNames, setOwnerNames] = useState<Array<{ id: string; name: string }>>([]);
@@ -229,7 +232,12 @@ export default function App() {
     setAiSettingsLoading(true);
     apiRequest("/api/agent/ai-settings").then(async r => {
       const d = await readJson(r);
-      if (r.ok && d.settings?.model) setAiModel(String(d.settings.model));
+      if (r.ok) {
+        if (d.settings?.provider === "gemini" || d.settings?.provider === "openai") setAiProvider(d.settings.provider);
+        if (d.settings?.model) setAiModel(String(d.settings.model));
+        if (typeof d.settings?.fallbackEnabled === "boolean") setAiFallbackEnabled(d.settings.fallbackEnabled);
+        if (Array.isArray(d.providers)) setAiProviders(d.providers);
+      }
     }).catch(() => {}).finally(() => setAiSettingsLoading(false));
   }, [dashboardToken]);
   useEffect(() => {
@@ -347,11 +355,22 @@ export default function App() {
             <button type="button" className="primary-button" style={{ marginTop: 12 }} disabled={!dashboardToken || ownerIdsSaving} onClick={saveOwnerIds}>{ownerIdsSaving ? "Saving…" : "Save owner IDs"}</button>
           </div>
           <div className="panel settings-panel" style={{ marginTop: 16 }}>
-            <div className="panel-heading"><div><h3>AI model</h3><p>{aiSettingsLoading ? "Loading…" : "Gemini model used for replies."}</p></div></div>
-            <input className="form-control" value={aiModel} onChange={e => setAiModel(e.target.value)} disabled={!dashboardToken} />
+            <div className="panel-heading"><div><h3>AI provider & model</h3><p>{aiSettingsLoading ? "Loading…" : "Choose the model that writes automatic replies."}</p></div></div>
+            <label className="field-label" htmlFor="ai-provider">AI provider</label>
+            <select id="ai-provider" className="form-control" value={aiProvider} disabled={!dashboardToken || aiSettingsLoading} onChange={e => { const next = e.target.value as "gemini" | "openai"; setAiProvider(next); setAiModel(next === "openai" ? "gpt-4o-mini" : "gemini-3.5-flash-lite"); }}>
+              {(aiProviders.length ? aiProviders : [{id:"gemini",label:"Google Gemini",configured:true,models:["gemini-3.5-flash-lite"]},{id:"openai",label:"OpenAI",configured:false,models:["gpt-4o-mini","gpt-4o"]}]).map(p => <option key={p.id} value={p.id} disabled={!p.configured}>{p.label}{p.configured ? "" : " (API key missing)"}</option>)}
+            </select>
+            <label className="field-label" htmlFor="ai-model">Model</label>
+            <select id="ai-model" className="form-control" value={aiModel} disabled={!dashboardToken || aiSettingsLoading} onChange={e => setAiModel(e.target.value)}>
+              {(aiProviders.find(p => p.id === aiProvider)?.models || (aiProvider === "openai" ? ["gpt-4o-mini","gpt-4o"] : ["gemini-3.5-flash-lite"])).map(model => <option key={model} value={model}>{model}</option>)}
+            </select>
+            <label className="toggle-row" style={{ marginTop: 12 }}>
+              <input type="checkbox" checked={aiFallbackEnabled} disabled={!dashboardToken || aiSettingsLoading || !aiProviders.some(p => p.id !== aiProvider && p.configured)} onChange={e => setAiFallbackEnabled(e.target.checked)} />
+              <span><b>Automatic provider fallback</b><small>Use the other configured provider if this one has a temporary outage or quota limit.</small></span>
+            </label>
             <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
-              <button type="button" className="secondary-button compact" disabled={!dashboardToken || aiSettingsLoading} onClick={() => apiRequest("/api/agent/ai-settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: "gemini", model: aiModel, fallbackEnabled: false }) }).then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Save failed"); flash("AI model saved."); }).catch(e => flash(e instanceof Error ? e.message : "Save failed"))}>Save model</button>
-              <button type="button" className="secondary-button compact" disabled={!dashboardToken} onClick={() => apiRequest("/api/agent/ai-settings/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: "gemini", model: aiModel }) }).then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Test failed"); flash("Model test OK."); }).catch(e => flash(e instanceof Error ? e.message : "Test failed"))}>Test model</button>
+              <button type="button" className="secondary-button compact" disabled={!dashboardToken || aiSettingsLoading} onClick={() => apiRequest("/api/agent/ai-settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: aiProvider, model: aiModel, fallbackEnabled: aiFallbackEnabled }) }).then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Save failed"); flash("AI provider settings saved."); }).catch(e => flash(e instanceof Error ? e.message : "Save failed"))}>Save AI settings</button>
+              <button type="button" className="secondary-button compact" disabled={!dashboardToken || aiSettingsLoading} onClick={() => apiRequest("/api/agent/ai-settings/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: aiProvider, model: aiModel }) }).then(async r => { const d = await readJson(r); if (!r.ok) throw new Error(d.error || "Test failed"); flash("AI model test passed."); }).catch(e => flash(e instanceof Error ? e.message : "Test failed"))}>Test model</button>
             </div>
           </div>
           <div style={{ marginTop: 16 }}><WebhookPanel enabled={Boolean(dashboardToken)} apiRequest={apiRequest} readJson={readJson} /></div>

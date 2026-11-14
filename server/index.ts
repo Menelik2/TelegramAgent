@@ -234,7 +234,7 @@ function isAiProvider(value: unknown): value is AiProvider {
   return value === "gemini" || value === "openai";
 }
 
-app.get("/api/agent/ai-settings", async (_req, res) => {
+app.get("/api/agent/ai-settings", requireDashboardAuth, async (_req, res) => {
   try {
     const settings = await getAiRuntimeSettings();
     return res.json({
@@ -250,7 +250,7 @@ app.get("/api/agent/ai-settings", async (_req, res) => {
   }
 });
 
-app.put("/api/agent/ai-settings", async (req, res) => {
+app.put("/api/agent/ai-settings", requireDashboardAuth, async (req, res) => {
   const provider: unknown = req.body?.provider;
   const model: unknown = req.body?.model;
   const fallbackEnabled: unknown = req.body?.fallbackEnabled;
@@ -268,7 +268,7 @@ app.put("/api/agent/ai-settings", async (req, res) => {
   }
 });
 
-app.post("/api/agent/ai-settings/test", rateLimit({ name: "ai-model-test", limit: 5, windowMs: 60_000 }), async (req, res) => {
+app.post("/api/agent/ai-settings/test", rateLimit({ name: "ai-model-test", limit: 5, windowMs: 60_000 }), requireDashboardAuth, async (req, res) => {
   const provider: unknown = req.body?.provider;
   const model: unknown = req.body?.model;
   if (!isAiProvider(provider)) return res.status(400).json({ ok: false, error: "Choose a supported provider." });
@@ -698,7 +698,9 @@ app.post("/api/telegram/webhook", (req, res, next) => multiUserEnabled() ? next(
     if (isPersistentStoreConfigured()) {
       try {
         const history = await listConversationMessages(chatId, 0, 100, businessConnectionId);
-        const window = history.slice(-40);
+        // recordMessage runs before this lookup; exclude the current update because it is
+        // already supplied separately as latestMessage to the model.
+        const window = history.filter(item => item.updateId !== updateId).slice(-40);
         recentMessages = window.map(item => {
           const who = item.direction === "incoming" ? "Them" : "Me";
           return who + ": " + item.text.slice(0, 900);

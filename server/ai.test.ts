@@ -35,6 +35,8 @@ describe("natural Telegram replies", () => {
     expect(JSON.parse(body.messages[1].content)).toEqual({ latestMessage: incomingText, conversationAndOwnerNotes: "Them: We were discussing the trip." });
     expect(body.messages[0].content).toContain("Help with everyday questions");
     expect(body.messages[0].content).toContain("Understand short messages, typos, abbreviations, emojis");
+    expect(body.messages[0].content).toContain("Answer the actual request, not merely acknowledge it");
+    expect(body.messages[0].content).toContain("give the answer first");
     expect(body.messages[0].content).not.toContain("latest incoming message is English");
     expect(body.max_tokens).toBe(1600);
   });

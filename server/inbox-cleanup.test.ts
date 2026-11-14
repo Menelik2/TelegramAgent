@@ -58,6 +58,7 @@ beforeAll(async () => {
     if (failStorage) return json({}, 503);
     const resource = url.pathname.replace("/rest/v1/", "");
     if (resource === "agent_events") return json([]);
+    if (resource === "agent_owner_ids") return json([]);
     if (resource === "rpc/clear_agent_message_history") {
       try { const result = await db.query<{ count: number }>("select clear_agent_message_history()::int as count"); return json(result.rows[0].count); }
       catch { return json({}, 500); }

@@ -37,8 +37,10 @@ describe("natural Telegram replies", () => {
     expect(body.messages[0].content).toContain("Understand short messages, typos, abbreviations, emojis");
     expect(body.messages[0].content).toContain("Answer the actual request, not merely acknowledge it");
     expect(body.messages[0].content).toContain("give the answer first");
+    expect(body.messages[0].content).toContain("Do not volunteer or repeatedly announce that you are an AI");
+    expect(body.messages[0].content).toContain("If asked directly whether you are AI, a bot, or automated, answer truthfully");
     expect(body.messages[0].content).not.toContain("latest incoming message is English");
-    expect(body.max_tokens).toBe(1600);
+    expect(body.max_tokens).toBe(2400);
   });
 
   it.each(["openai", "gemini"] as const)("does not send incomplete %s output", async provider => {

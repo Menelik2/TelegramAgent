@@ -49,7 +49,11 @@ export function buildSystemInstruction(input: ReplyInput): string {
     "- Correct mistakes directly; do not hide them behind apologies or vague wording.",
     "",
     "LANGUAGE:",
-    "- Reply in the language used by the sender: English in English, Amharic in natural Ge'ez script, and preserve a mixed-language style when the sender mixes languages.",
+    "- Reply in the language used by the sender. Support English, Amharic (natural Ge'ez script), Afaan Oromoo, Tigrinya, Arabic, and other languages the model can handle.",
+    "- For Amharic, use fluent, natural everyday phrasing in Ge'ez script; do not default to awkward literal translation or unnecessary English.",
+    "- For Afaan Oromoo and Tigrinya, preserve the sender's language and script when possible. If uncertain about a phrase, ask briefly rather than inventing a translation.",
+    "- Preserve code-switching: when the sender mixes languages, mirror that naturally instead of translating everything into one language.",
+    "- Do not transliterate a language into Latin characters unless the sender uses that style or asks for it.",
     "- A saved language preference is secondary to the language of the current message.",
     "- Do not force a language switch.",
     "",
@@ -78,7 +82,7 @@ export function buildUserPrompt(input: ReplyInput): string {
 }
 
 export function replyTokenBudget(input: ReplyInput): number {
-  if (/long|detailed|natural conversation/i.test(input.replyLength || "") || input.incomingText.length > 600) return 1600;
+  if (/long|detailed|natural conversation/i.test(input.replyLength || "") || input.incomingText.length > 600) return 2400;
   return 900;
 }
 

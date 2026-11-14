@@ -26,7 +26,7 @@ export function useWorkspaceInbox(token: string, base: string, active: boolean, 
   const [stored, setStored] = useState(() => empty(key));
   const state = stored.key === key ? stored : empty(key);
   const latest = useRef(state); latest.current = state;
-  useEffect(() => () => { scope.alive = false; for (const controller of scope.controllers) controller.abort(); }, [scope]);
+  useEffect(() => { scope.alive = true; return () => { scope.alive = false; for (const controller of scope.controllers) controller.abort(); }; }, [scope]);
   const valid = useCallback(() => scope.alive && currentScope.current === scope, [scope]);
   const patch = useCallback((change: (s: State) => State) => { if (valid()) setStored(s => change(s.key === key ? s : empty(key))); }, [key, valid]);
   const request = useCallback(async (path: string, init: RequestInit = {}) => {

@@ -121,16 +121,20 @@ export function useWorkspaceInbox(token: string, base: string, active: boolean, 
       const data = await request(`/api/inbox/${encodeURIComponent(conversationId)}/messages?offset=${offset}&limit=50`);
       if (!valid() || tokenN !== scope.history) return;
       const mapped = mapMessages(data.messages || []);
-      patch(s => ({
-        ...s,
-        historyLoading: false,
-        olderLoading: false,
-        offset: typeof data.nextOffset === "number" ? data.nextOffset : offset + mapped.length,
-        hasMore: Boolean(data.hasMore),
-        contacts: s.contacts.map(c => c.id === conversationId
-          ? { ...c, messages: offset === 0 ? mapped : mergeMessages(mapped, c.messages) }
-          : c)
-      }));
+      patch(s => {
+        const current = s.contacts.find(c => c.id === conversationId)?.messages || [];
+        const addedLatest = mapped.filter(m => !current.some(old => old.id === m.id)).length;
+        return {
+          ...s,
+          historyLoading: false,
+          olderLoading: false,
+          offset: offset === 0 ? (current.length ? s.offset + addedLatest : mapped.length) : (typeof data.nextOffset === "number" ? data.nextOffset : offset + mapped.length),
+          hasMore: offset === 0 ? (Boolean(data.hasMore) || s.hasMore) : Boolean(data.hasMore),
+          contacts: s.contacts.map(c => c.id === conversationId
+            ? { ...c, messages: offset === 0 && c.messages.length > mapped.length ? mergeMessages(c.messages, mapped) : (offset === 0 ? mapped : mergeMessages(mapped, c.messages)) }
+            : c)
+        };
+      });
     } catch (error) {
       if (!valid() || tokenN !== scope.history) return;
       patch(s => ({ ...s, historyLoading: false, olderLoading: false, historyError: errorText(error) }));

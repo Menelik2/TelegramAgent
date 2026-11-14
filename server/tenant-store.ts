@@ -55,7 +55,7 @@ export async function tenantBudget(owner: string): Promise<boolean> {
   return tenantDb<boolean>("rpc/tenant_budget", "POST", { p_owner: owner, p_limit: tenantDailyReplyLimit() });
 }
 export async function tenantAiHistory(job: TenantJob): Promise<TenantMessage[]> {
-  return tenantDb<TenantMessage[]>(`tenant_messages?owner_id=${eq(job.owner_id)}&connection_id=${eq(job.connection_id)}&chat_id=${eq(job.chat_id)}&ai_context=eq.true&id=lt.${job.message_id}&order=created_at.desc,id.desc&limit=12`);
+  return tenantDb<TenantMessage[]>(`tenant_messages?owner_id=${eq(job.owner_id)}&connection_id=${eq(job.connection_id)}&chat_id=${eq(job.chat_id)}&ai_context=eq.true&id=lt.${job.message_id}&order=created_at.desc,id.desc&limit=20`);
 }
 export async function tenantFinish(job: TenantJob, status: string): Promise<void> {
   await tenantDb("tenant_jobs?owner_id=" + eq(job.owner_id) + "&update_id=" + eq(job.update_id) + "&status=in.(processing,sending)", "PATCH", { status });

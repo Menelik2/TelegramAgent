@@ -41,12 +41,11 @@ describe("Workspace / Inbox controls",()=>{
     fireEvent.click(screen.getByRole("button",{name:/Alex.*AI enabled/}));
     expect((screen.getByRole("textbox",{name:"Reply message"}) as HTMLTextAreaElement).value).toBe("For Alex");
   });
-  it("retains conversation selection and manual reply access after confirmed cleanup",async()=>{
-    await openInbox();vi.spyOn(window,"prompt").mockReturnValue("CLEAR HISTORY");
-    fireEvent.click(screen.getByRole("button",{name:"Clear database copies"}));
-    await screen.findByText("No stored messages");
-    expect(screen.getByRole("textbox",{name:"Reply message"})).toBeTruthy();
-    expect(document.querySelectorAll(".conversation")).toHaveLength(2);
+  it("clears the inbox after the updated confirmation phrase",async()=>{
+    await openInbox();vi.spyOn(window,"prompt").mockReturnValue("CLEAR INBOX");
+    fireEvent.click(screen.getByRole("button",{name:"Clear inbox"}));
+    await screen.findByText("No conversations");
+    expect(document.querySelectorAll(".conversation")).toHaveLength(0);
   });
   it("does not send on IME composition or Shift+Enter",async()=>{
     await openInbox();const input=screen.getByRole("textbox",{name:"Reply message"});

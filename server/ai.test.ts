@@ -46,6 +46,16 @@ describe("natural Telegram replies", () => {
   });
 
 
+  it("does not hide invalid provider credentials by calling the alternate provider", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json(
+      { error: { message: "invalid API key" } },
+      { status: 401 }
+    ));
+    await expect(generateReply({ incomingText: "Hello" }, settings("openai", true)))
+      .rejects.toThrow(/OpenAI API request failed \\(401\\)/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("falls back from OpenAI to Gemini when the alternate provider is configured", async () => {
     fetchMock
       .mockResolvedValueOnce(Response.json({ error: { message: "temporary OpenAI failure" } }, { status: 503 }))

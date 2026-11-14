@@ -25,7 +25,7 @@ describe("natural Telegram replies", () => {
     const result = await generateReply({ incomingText: "What time is the train? Also explain the other route. " + "More context. ".repeat(60) }, settings(provider));
     expect(result).toBe(reply.trim());
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(provider === "openai" ? body.max_tokens : body.generationConfig.maxOutputTokens).toBe(1600);
+    expect(provider === "openai" ? body.max_tokens : body.generationConfig.maxOutputTokens).toBe(2400);
   });
 
   it.each(["Hola, ¿cómo estás?", "ሰላም፣ እንዴት ነህ?", "مرحبا كيف حالك؟", "😂", "why?"])("passes the message and context without forcing English: %s", async incomingText => {

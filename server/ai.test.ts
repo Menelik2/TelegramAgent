@@ -33,7 +33,8 @@ describe("natural Telegram replies", () => {
     await generateReply({ incomingText, recentContext: "Them: We were discussing the trip.", replyLength: "detailed when needed" }, settings("openai"));
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(JSON.parse(body.messages[1].content)).toEqual({ latestMessage: incomingText, conversationAndOwnerNotes: "Them: We were discussing the trip." });
-    expect(body.messages[0].content).toContain("whatever it is");
+    expect(body.messages[0].content).toContain("Help with everyday questions");
+    expect(body.messages[0].content).toContain("Understand short messages, typos, abbreviations, emojis");
     expect(body.messages[0].content).not.toContain("latest incoming message is English");
     expect(body.max_tokens).toBe(1600);
   });

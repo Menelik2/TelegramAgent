@@ -41,12 +41,12 @@ const allowedGroupIds = new Set((process.env.TELEGRAM_ALLOWED_GROUP_IDS || "").s
 const botUsername = (process.env.TELEGRAM_BOT_USERNAME || "yeniagentbot").replace(/^@/, "").toLowerCase();
 const botId = (process.env.TELEGRAM_BOT_ID || "").trim();
 async function authorizedBusinessConnection(connectionId: string): Promise<boolean> {
-  if (!connectionId || !process.env.TELEGRAM_BOT_TOKEN || (await ownerUserIds()).size === 0) return false;
+  if (!connectionId || !process.env.TELEGRAM_BOT_TOKEN || (await getAuthorizedOwnerIds()).size === 0) return false;
   const response = await fetch("https://api.telegram.org/bot" + process.env.TELEGRAM_BOT_TOKEN + "/getBusinessConnection", {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ business_connection_id: connectionId })
   });
   const body = await response.json() as { ok?: boolean; result?: { id?: string; can_reply?: boolean; rights?: { can_reply?: boolean }; is_enabled?: boolean; user?: { id?: number } } };
-  return Boolean(response.ok && body.ok && body.result?.id === connectionId && body.result.is_enabled && (body.result.rights?.can_reply ?? body.result.can_reply) === true && (await ownerUserIds()).has(String(body.result?.user?.id || "")));
+  return Boolean(response.ok && body.ok && body.result?.id === connectionId && body.result.is_enabled && (body.result.rights?.can_reply ?? body.result.can_reply) === true && (await getAuthorizedOwnerIds()).has(String(body.result?.user?.id || "")));
 }
 let lastWebhookAt: string | null = null;
 
@@ -93,7 +93,22 @@ app.use("/api/agent", requireDashboardAuth);
 app.get("/api/agent/owner-ids", async (_req, res) => {
   try {
     const ids = await getOwnerUserIds();
-    return res.json({ ok: true, ownerIds: ids, count: ids.length, persistent: isProfileStoreConfigured() });
+    const token = process.env.TELEGRAM_BOT_TOKEN || "";
+    const owners = await Promise.all(ids.map(async id => {
+      if (!token) return { id, name: "Name unavailable" };
+      try {
+        const response = await fetch("https://api.telegram.org/bot" + token + "/getChat", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ chat_id: id }), signal: AbortSignal.timeout(10000)
+        });
+        const data = await response.json() as { ok?: boolean; result?: { first_name?: string; last_name?: string; username?: string } };
+        const name = data.ok && data.result
+          ? [data.result.first_name, data.result.last_name].filter(Boolean).join(" ").trim() || (data.result.username ? "@" + data.result.username : "Name unavailable")
+          : "Name unavailable";
+        return { id, name };
+      } catch { return { id, name: "Name unavailable" }; }
+    }));
+    return res.json({ ok: true, ownerIds: ids, owners, count: ids.length, persistent: isProfileStoreConfigured() });
   } catch (error) { return res.status(503).json({ ok: false, error: error instanceof Error ? error.message : "Owner settings unavailable." }); }
 });
 app.put("/api/agent/owner-ids", async (req, res) => {

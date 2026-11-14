@@ -26,6 +26,7 @@ export function useWorkspaceInbox(token: string, base: string, active: boolean, 
   const [stored, setStored] = useState(() => empty(key));
   const state = stored.key === key ? stored : empty(key);
   const latest = useRef(state); latest.current = state;
+  useEffect(() => { scope.alive = true; return () => { scope.alive = false; for (const controller of scope.controllers) controller.abort(); }; }, [scope]);
   const valid = useCallback(() => scope.alive && currentScope.current === scope, [scope]);
   const patch = useCallback((change: (s: State) => State) => { if (valid()) setStored(s => change(s.key === key ? s : empty(key))); }, [key, valid]);
   const request = useCallback(async (path: string, init: RequestInit = {}) => {
@@ -120,16 +121,20 @@ export function useWorkspaceInbox(token: string, base: string, active: boolean, 
       const data = await request(`/api/inbox/${encodeURIComponent(conversationId)}/messages?offset=${offset}&limit=50`);
       if (!valid() || tokenN !== scope.history) return;
       const mapped = mapMessages(data.messages || []);
-      patch(s => ({
-        ...s,
-        historyLoading: false,
-        olderLoading: false,
-        offset: typeof data.nextOffset === "number" ? data.nextOffset : offset + mapped.length,
-        hasMore: Boolean(data.hasMore),
-        contacts: s.contacts.map(c => c.id === conversationId
-          ? { ...c, messages: offset === 0 ? mapped : mergeMessages(mapped, c.messages) }
-          : c)
-      }));
+      patch(s => {
+        const current = s.contacts.find(c => c.id === conversationId)?.messages || [];
+        const addedLatest = mapped.filter(m => !current.some(old => old.id === m.id)).length;
+        return {
+          ...s,
+          historyLoading: false,
+          olderLoading: false,
+          offset: offset === 0 ? (current.length ? s.offset + addedLatest : mapped.length) : (typeof data.nextOffset === "number" ? data.nextOffset : offset + mapped.length),
+          hasMore: offset === 0 ? (Boolean(data.hasMore) || s.hasMore) : Boolean(data.hasMore),
+          contacts: s.contacts.map(c => c.id === conversationId
+            ? { ...c, messages: offset === 0 && c.messages.length > mapped.length ? mergeMessages(c.messages, mapped) : (offset === 0 ? mapped : mergeMessages(mapped, c.messages)) }
+            : c)
+        };
+      });
     } catch (error) {
       if (!valid() || tokenN !== scope.history) return;
       patch(s => ({ ...s, historyLoading: false, olderLoading: false, historyError: errorText(error) }));
@@ -151,7 +156,7 @@ export function useWorkspaceInbox(token: string, base: string, active: boolean, 
     if (!token || !active) return;
     void refreshWithHistory();
     const timer = window.setInterval(() => {
-      if (!scope.sending && !scope.cleaning && !scope.older && latest.current.offset <= 100) void refreshWithHistory();
+      if (!scope.sending && !scope.cleaning && !scope.older) void refreshWithHistory();
     }, 15000);
     return () => window.clearInterval(timer);
   }, [token, active, refreshWithHistory, scope]);
@@ -235,7 +240,9 @@ export function useWorkspaceInbox(token: string, base: string, active: boolean, 
         ...s,
         offset: 0,
         hasMore: false,
-        contacts: s.contacts.map(c => ({ ...c, last: "", messages: [] })),
+        selectedId: "",
+        drafts: {},
+        contacts: [],
         revision: s.revision + 1
       }));
       scope.cleaning = false;

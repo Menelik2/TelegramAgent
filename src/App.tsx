@@ -201,6 +201,7 @@ export default function App() {
   const [aiModel, setAiModel] = useState("gemini-3.5-flash-lite");
   const [aiSettingsLoading, setAiSettingsLoading] = useState(false);
   const [ownerIdsText, setOwnerIdsText] = useState("");
+  const [ownerNames, setOwnerNames] = useState<Array<{ id: string; name: string }>>([]);
   const [ownerIdsLoading, setOwnerIdsLoading] = useState(false);
   const [ownerIdsSaving, setOwnerIdsSaving] = useState(false);
   const [ownerIdsError, setOwnerIdsError] = useState("");
@@ -236,7 +237,7 @@ export default function App() {
     setOwnerIdsLoading(true);
     apiRequest("/api/agent/owner-ids").then(async r => {
       const d = await readJson(r);
-      if (r.ok) setOwnerIdsText((d.ownerIds || []).join("\n"));
+      if (r.ok) { setOwnerIdsText((d.ownerIds || []).join("\n")); setOwnerNames(d.owners || []); }
     }).catch(() => {}).finally(() => setOwnerIdsLoading(false));
   }, [dashboardToken]);
   const toggleAutomation = () => {
@@ -263,7 +264,7 @@ export default function App() {
   const saveOwnerIds = () => {
     const ids = [...new Set(ownerIdsText.split(/[\s,;]+/).map(v => v.trim()).filter(Boolean))];
     if (!ids.length || ids.length > 100 || ids.some(id => !/^[1-9][0-9]{0,19}$/.test(id))) {
-      setOwnerIdsError("Enter 1–100 valid numeric Telegram user IDs.");
+      setOwnerIdsError("Enter 1–100 valid Telegram accounts using their numeric IDs.");
       return;
     }
     setOwnerIdsSaving(true); setOwnerIdsError("");
@@ -338,8 +339,9 @@ export default function App() {
             <p className="helper-text">Must match DASHBOARD_API_TOKEN in Vercel. Sent as x-dashboard-token on every authenticated request.</p>
           </div>
           <div className="panel settings-panel" style={{ marginTop: 16 }}>
-            <div className="panel-heading"><div><h3>Telegram Business owner IDs</h3><p>Authorized owner accounts that can connect the bot.</p></div></div>
-            <label className="field-label" htmlFor="owner-ids">One ID per line or comma-separated</label>
+            <div className="panel-heading"><div><h3>Telegram Business owners</h3><p>Authorized accounts shown by their Telegram names.</p></div></div>
+            <div className="permission-list">{ownerNames.map(owner => <div className="permission-row" key={owner.id}><div className="permission-copy"><b>{owner.name}</b><span>{owner.name === "Name unavailable" ? "Telegram could not provide this name" : "Authorized Telegram account"}</span></div></div>)}</div>
+            <label className="field-label" htmlFor="owner-ids">Add or edit owner accounts (Telegram IDs)</label>
             <textarea id="owner-ids" className="form-control" rows={5} style={{ maxWidth: "100%" }} value={ownerIdsText} onChange={e => setOwnerIdsText(e.target.value)} disabled={!dashboardToken || ownerIdsLoading || ownerIdsSaving} placeholder={"123456789\n987654321"} />
             {ownerIdsError ? <p className="helper-text" role="alert" style={{ color: "#ffb5c0" }}>{ownerIdsError}</p> : null}
             <button type="button" className="primary-button" style={{ marginTop: 12 }} disabled={!dashboardToken || ownerIdsSaving} onClick={saveOwnerIds}>{ownerIdsSaving ? "Saving…" : "Save owner IDs"}</button>
@@ -362,8 +364,8 @@ export default function App() {
           <div className="page-heading"><div><div className="eyebrow">Conversations</div><h1>Inbox</h1></div>
             <button type="button" className="secondary-button" onClick={() => void inbox.refresh()} disabled={!dashboardToken || inbox.state.loading}>{inbox.state.loading ? "Loading…" : "Refresh"}</button>
             <button type="button" className="secondary-button" disabled={!dashboardToken || inbox.state.cleaning}
-              onClick={() => { if (window.prompt("Type CLEAR HISTORY to remove stored copies only (Telegram chats remain):") === "CLEAR HISTORY") void inbox.clear(); }}>
-              Clear database copies
+              onClick={() => { if (window.prompt("Type CLEAR INBOX to remove stored inbox conversations and message copies. Telegram chats remain untouched:") === "CLEAR INBOX") void inbox.clear(); }}>
+              Clear inbox
             </button></div>
           {!dashboardToken ? <div className="notice-card"><ShieldCheck size={18} /><div><b>Token required</b><p>Enter the dashboard token to load conversations.</p></div></div> : null}
           {inbox.state.error ? <div className="notice-card" role="alert"><ShieldCheck size={18} /><div><b>Inbox error</b><p>{inbox.state.error}</p></div></div> : null}
@@ -384,7 +386,10 @@ export default function App() {
               {inbox.selected ? <>
                 <div className="chat-header"><button type="button" aria-label="Back to conversations" className="secondary-button compact" onClick={() => setShowInboxThread(false)}>Back</button><div className="chat-contact"><b>{inbox.selected.name}</b><span>{inbox.selected.handle}</span></div>
                   <button type="button" className="secondary-button compact" onClick={() => void inbox.toggle(inbox.selected!.id)}>{inbox.selected.allowed ? <><Pause size={14} /> Pause AI</> : <><Play size={14} /> Allow AI</>}</button></div>
-                <div className="message-stream">{inbox.selected.messages.map(m => (
+                <div className="message-stream">
+                  {inbox.state.historyError ? <div className="notice-card" role="alert"><div><b>Could not load messages</b><p>{inbox.state.historyError}</p><button type="button" className="secondary-button compact" onClick={() => void inbox.refresh()}>Retry</button></div></div> : null}
+                  {inbox.state.olderLoading ? <p className="helper-text">Loading older messages…</p> : inbox.state.hasMore ? <button type="button" className="secondary-button compact" onClick={() => void inbox.loadOlder()}>Load older messages</button> : null}
+                  {inbox.selected.messages.map(m => (
                   <div key={m.id} className={"message-row " + (m.from === "ai" ? "outgoing" : "")}><div className={"bubble " + (m.from === "ai" ? "bubble-ai" : "bubble-them")}>{m.text}<time>{m.time}</time></div></div>
                 ))}{!inbox.selected.messages.length && !inbox.state.historyLoading && !inbox.state.historyError ? <p className="helper-text">No stored messages</p> : null}</div>
                 <div className="reply-box">

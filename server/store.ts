@@ -212,7 +212,7 @@ export async function listConversationMessages(chatId: string, offset = 0, limit
   const safeOffset = Math.max(0, Math.floor(offset));
   const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
   const response = await supabaseRequest(
-    `agent_messages?select=id,update_id,telegram_message_id,business_connection_id,chat_id,sender_id,sender_name,username,direction,message_text,created_at&chat_id=eq.${encodeURIComponent(chatId)}${connectionId ? "&business_connection_id=eq." + encodeURIComponent(connectionId) : ""}&order=created_at.desc&limit=${safeLimit}&offset=${safeOffset}`
+    `agent_messages?select=id,update_id,telegram_message_id,business_connection_id,chat_id,sender_id,sender_name,username,direction,message_text,created_at&chat_id=eq.${encodeURIComponent(chatId)}${connectionId ? "&business_connection_id=eq." + encodeURIComponent(connectionId) : ""}&order=created_at.desc,id.desc&limit=${safeLimit}&offset=${safeOffset}`
   );
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
@@ -222,7 +222,7 @@ export async function listConversationMessages(chatId: string, offset = 0, limit
   return rows.reverse().map(mapMessageRow);
 }
 
-/** Permanently remove only the dashboard's stored message copies. This never calls Telegram. */
+/** Permanently remove dashboard-stored messages and conversation rows. This never calls Telegram. */
 export async function clearStoredInboxHistory(): Promise<number> {
   if (!isPersistentStoreConfigured()) throw new Error("Supabase persistence is not configured.");
   const response = await supabaseRequest("rpc/clear_agent_message_history", {

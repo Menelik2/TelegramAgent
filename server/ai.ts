@@ -169,6 +169,19 @@ async function runProvider(
   return generateWithGemini(input, model, keyOverride);
 }
 
+function shouldAttemptFallback(error: unknown): boolean {
+  if (error instanceof AiQuotaError) return true;
+  if (error instanceof TypeError) return true; // fetch/network failure
+  if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  const status = message.match(/API request failed \\((\\d{3})\\)/)?.[1];
+  if (!status) return false;
+  const code = Number(status);
+  // Do not hide invalid credentials, unsupported models, or malformed requests
+  // by making a second provider call. Retry only transient/rate-limit responses.
+  return code === 408 || code === 409 || code === 425 || code === 429 || code >= 500;
+}
+
 export async function generateReply(input: {
   incomingText: string;
   recentContext?: string;
@@ -189,7 +202,7 @@ export async function generateReply(input: {
   try {
     return await runProvider(provider, input, model, overrideSettings?.apiKey);
   } catch (primaryError) {
-    if (settings.fallbackEnabled !== true) throw primaryError;
+    if (settings.fallbackEnabled !== true || !shouldAttemptFallback(primaryError)) throw primaryError;
 
     // A user-supplied provider key belongs only to that provider. Never send it
     // to another vendor; in that case, retain the existing OpenAI model fallback.

@@ -41,12 +41,12 @@ const allowedGroupIds = new Set((process.env.TELEGRAM_ALLOWED_GROUP_IDS || "").s
 const botUsername = (process.env.TELEGRAM_BOT_USERNAME || "yeniagentbot").replace(/^@/, "").toLowerCase();
 const botId = (process.env.TELEGRAM_BOT_ID || "").trim();
 async function authorizedBusinessConnection(connectionId: string): Promise<boolean> {
-  if (!connectionId || !process.env.TELEGRAM_BOT_TOKEN || (await ownerUserIds()).size === 0) return false;
+  if (!connectionId || !process.env.TELEGRAM_BOT_TOKEN || (await getAuthorizedOwnerIds()).size === 0) return false;
   const response = await fetch("https://api.telegram.org/bot" + process.env.TELEGRAM_BOT_TOKEN + "/getBusinessConnection", {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ business_connection_id: connectionId })
   });
   const body = await response.json() as { ok?: boolean; result?: { id?: string; can_reply?: boolean; rights?: { can_reply?: boolean }; is_enabled?: boolean; user?: { id?: number } } };
-  return Boolean(response.ok && body.ok && body.result?.id === connectionId && body.result.is_enabled && (body.result.rights?.can_reply ?? body.result.can_reply) === true && (await ownerUserIds()).has(String(body.result?.user?.id || "")));
+  return Boolean(response.ok && body.ok && body.result?.id === connectionId && body.result.is_enabled && (body.result.rights?.can_reply ?? body.result.can_reply) === true && (await getAuthorizedOwnerIds()).has(String(body.result?.user?.id || "")));
 }
 let lastWebhookAt: string | null = null;
 

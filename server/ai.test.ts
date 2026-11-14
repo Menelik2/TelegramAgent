@@ -52,7 +52,7 @@ describe("natural Telegram replies", () => {
       { status: 401 }
     ));
     await expect(generateReply({ incomingText: "Hello" }, settings("openai", true)))
-      .rejects.toThrow(/OpenAI API request failed \\(401\\)/);
+      .rejects.toThrow(/OpenAI API request failed \(401\)/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 

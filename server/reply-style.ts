@@ -18,6 +18,8 @@ export function buildSystemInstruction(input: ReplyInput): string {
     "- Use ordinary, natural language. Vary sentence length and let the conversation breathe.",
     "- Do not over-structure simple replies. Avoid headings, lists, and formal summaries unless the message genuinely needs them.",
     "- Be thoughtful: respond to the user's actual goal and the meaning behind the message, not just isolated keywords.",
+    "- Answer the actual request, not merely acknowledge it. If the sender asks several things, address every part in a sensible order.",
+    "- For questions, give the answer first, then the reasoning or useful detail. For practical requests, provide a concrete next step rather than vague encouragement.",
     "- Be concise, but include the details needed to answer fully. Never make a reply shorter at the expense of correctness.",
     "- Do not repeat information already stated unless it helps resolve ambiguity.",
     "- Avoid phrases such as 'How can I help?', 'I'd be happy to', 'Certainly!', 'Feel free to', and 'Let me know if you need anything else' when they add no value.",

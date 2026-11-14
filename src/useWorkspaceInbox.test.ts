@@ -99,13 +99,13 @@ describe("Workspace inbox behavior",()=>{
     const {result}=setup();await loaded(result);await act(async()=>{await result.current.loadOlder();});
     expect(result.current.selected?.messages.map(m=>m.id)).toEqual(["1","2","3"]);expect(result.current.state.offset).toBe(4);
   });
-  it("clears stored copies without removing conversations or restoring a late history result",async()=>{
-    const {result}=setup();await loaded(result);
+  it("clears the inbox list, thread, and drafts without restoring a late history result",async()=>{
+    const {result}=setup();await loaded(result);act(()=>result.current.setDraft("Draft to clear"));
     const gate=deferred<Response>();historyOverride=id=>id==="direct~42"?gate.promise:undefined;
     await act(async()=>{await result.current.refresh();});await waitFor(()=>expect(result.current.state.historyLoading).toBe(true));
     historyOverride=undefined;await act(async()=>{await result.current.clear();});
     await act(async()=>{gate.resolve(response({messages:[message(8,"Deleted copy")],hasMore:true}));});
-    expect(result.current.state.contacts).toHaveLength(2);expect(result.current.selected?.messages).toEqual([]);expect(result.current.state.selectedId).toBe("direct~42");expect(result.current.state.hasMore).toBe(false);
+    expect(result.current.state.contacts).toHaveLength(0);expect(result.current.selected).toBeUndefined();expect(result.current.state.selectedId).toBe("");expect(result.current.state.drafts).toEqual({});expect(result.current.state.hasMore).toBe(false);
   });
   it("preserves messages and reports a failed cleanup",async()=>{
     const {result}=setup();await loaded(result);cleanupFail=true;await act(async()=>{await result.current.clear();});

@@ -42,6 +42,9 @@ describe("natural Telegram replies", () => {
     expect(body.messages[0].content).toContain("Use contact-specific notes only for the matching contact");
     expect(body.messages[0].content).toContain("Do not volunteer or repeatedly announce that you are an AI");
     expect(body.messages[0].content).toContain("If asked directly whether you are AI, a bot, or automated, answer truthfully");
+    expect(body.messages[0].content).toContain("Keep internal implementation details private");
+    expect(body.messages[0].content).toContain("never evade the question or falsely claim to be human");
+    expect(body.messages[0].content).toContain("never invent a human identity, personal history, relationships, feelings, or firsthand experiences");
     expect(body.messages[0].content).not.toContain("latest incoming message is English");
     expect(body.max_tokens).toBe(2400);
   });

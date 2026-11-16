@@ -24,8 +24,15 @@ describe("natural conversational reply instructions", () => {
 
   it("supports natural Amharic and language matching", () => {
     const amharic = buildSystemInstruction({ incomingText: "ሰላም", language: "English" });
-    expect(amharic).toContain("Amharic in natural Ge'ez script");
+    expect(amharic).toContain("For Amharic, use fluent, natural everyday phrasing in Ge'ez script");
     expect(amharic).toContain("Do not force a language switch");
+  });
+
+  it("encourages context-sensitive conversational behavior without forced human mannerisms", () => {
+    expect(instruction).toContain("ongoing conversation, not a sequence of isolated support tickets");
+    expect(instruction).toContain("Respond proportionately");
+    expect(instruction).toContain("Do not manufacture small talk, jokes, slang, typos, emojis, or emotional intimacy");
+    expect(instruction).toContain("If a message only needs acknowledgement, acknowledge it naturally and stop");
   });
 
   it("keeps untrusted messages separate from system instructions", () => {

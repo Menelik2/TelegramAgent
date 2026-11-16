@@ -24,7 +24,7 @@ describe("natural conversational reply instructions", () => {
 
   it("supports natural Amharic and language matching", () => {
     const amharic = buildSystemInstruction({ incomingText: "ሰላም", language: "English" });
-    expect(amharic).toContain("Amharic in natural Ge'ez script");
+    expect(amharic).toContain("For Amharic, use fluent, natural everyday phrasing in Ge'ez script");
     expect(amharic).toContain("Do not force a language switch");
   });
 
